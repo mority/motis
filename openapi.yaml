@@ -286,389 +286,34 @@ paths:
       summary: Computes optimal connections from one place to another.
       operationId: plan
       parameters:
-        - name: fromPlace
-          in: query
-          required: true
-          description: \`latitude,longitude,level\` tuple in degrees OR stop id
-          schema:
-            type: string
+        - $ref: '#/components/parameters/fromPlace'
+        - $ref: '#/components/parameters/toPlace'
+        - $ref: '#/components/parameters/via'
+        - $ref: '#/components/parameters/viaMinimumStay'
+        - $ref: '#/components/parameters/time'
+        - $ref: '#/components/parameters/maxTransfers'
+        - $ref: '#/components/parameters/maxHours'
+        - $ref: '#/components/parameters/minTransferTime'
+        - $ref: '#/components/parameters/additionalTransferTime'
+        - $ref: '#/components/parameters/transferTimeFactor'
+        - $ref: '#/components/parameters/maxMatchingDistance'
+        - $ref: '#/components/parameters/wheelchair'
+        - $ref: '#/components/parameters/transitModes'
+        - $ref: '#/components/parameters/directModes'
+        - $ref: '#/components/parameters/preTransitModes'
+        - $ref: '#/components/parameters/postTransitModes'
+        - $ref: '#/components/parameters/numItineraries'
+        - $ref: '#/components/parameters/pageCursor'
+        - $ref: '#/components/parameters/timetableView'
+        - $ref: '#/components/parameters/arriveBy'
+        - $ref: '#/components/parameters/searchWindow'
+        - $ref: '#/components/parameters/requireBikeTransport'
+        - $ref: '#/components/parameters/maxPreTransitTime'
+        - $ref: '#/components/parameters/maxPostTransitTime'
+        - $ref: '#/components/parameters/maxDirectTime'
 
-        - name: toPlace
-          in: query
-          required: true
-          description: \`latitude,longitude,level\` tuple in degrees OR stop id
-          schema:
-            type: string
-
-        - name: via
-          in: query
-          required: false
-          description: |
-            List of via stops to visit (only stop IDs, no coordinates allowed for now).
-            Also see the optional parameter `viaMinimumStay` to set a set a minimum stay duration for each via stop.
-          schema:
-            type: array
-            maxItems: 2
-            items:
-              type: string
-          explode: false
-
-        - name: viaMinimumStay
-          in: query
-          required: false
-          description: |
-            Optional. If not set, the default is `0,0` - no stay required.
-            
-            For each `via` stop a minimum stay duration in minutes.
-            
-            The value `0` signals that it's allowed to stay in the same trip.
-            This enables via stays without counting a transfer and can lead 
-            to better connections with less transfers. Transfer connections can
-            still be found with `viaMinimumStay=0`.
-          schema:
-            default: [ 0, 0 ]
-            type: array
-            maxItems: 2
-            items:
-              type: integer
-          explode: false
-
-        - name: time
-          in: query
-          required: false
-          description: |
-            Optional. Defaults to the current time.
-            
-            Departure time ($arriveBy=false) / arrival date ($arriveBy=true),
-          schema:
-            type: string
-            format: date-time
-
-        - name: maxTransfers
-          in: query
-          required: false
-          description: |
-            The maximum number of allowed transfers.
-            If not provided, the routing uses the server-side default value
-            which is hardcoded and very high to cover all use cases.
-            
-            *Warning*: Use with care. Setting this too low can lead to
-            optimal (e.g. the fastest) journeys not being found.
-            If this value is too low to reach the destination at all,
-            it can lead to slow routing performance.
-          schema:
-            type: integer
-
-        - name: maxHours
-          in: query
-          required: false
-          description: |
-            The maximum travel time in hours.
-            If not provided, the routing to uses the value
-            hardcoded in the server which is usually quite high.
-            
-            *Warning*: Use with care. Setting this too low can lead to
-            optimal (e.g. the least transfers) journeys not being found.
-            If this value is too low to reach the destination at all,
-            it can lead to slow routing performance.
-            
-            TODO: pass parameter to nigiri
-          schema:
-            type: number
-
-        - name: minTransferTime
-          in: query
-          required: false
-          description: |
-            Optional. Default is 0 minutes.
-            
-            Minimum transfer time for each transfer in minutes.
-          schema:
-            type: integer
-            default: 0
-
-        - name: additionalTransferTime
-          in: query
-          required: false
-          description: |
-            Optional. Default is 0 minutes.
-            
-            Additional transfer time reserved for each transfer in minutes.
-          schema:
-            type: integer
-            default: 0
-
-        - name: transferTimeFactor
-          in: query
-          required: false
-          description: |
-            Optional. Default is 1.0
-            
-            Factor to multiply minimum required transfer times with.
-            Values smaller than 1.0 are not supported.
-          schema:
-            type: number
-            default: 1.0
-
-        - name: maxMatchingDistance
-          in: query
-          required: true
-          description: |
-            Optional. Default is 25 meters.
-            
-            Maximum matching distance in meters to match geo coordinates to the street network.
-          schema:
-            type: number
-            default: 25
-
-        - name: wheelchair
-          in: query
-          description: Whether the trip must be wheelchair accessible.
-          required: false
-          schema:
-            type: boolean
-            default: false
-
-        - name: transitModes
-          in: query
-          required: false
-          description: |
-            Optional. Default is `TRANSIT` which allows all transit modes (no restriction).
-            Allowed modes for the transit part. If empty, no transit connections will be computed.
-            For example, this can be used to allow only `METRO,SUBWAY,TRAM`.
-          schema:
-            default:
-              - TRANSIT
-            type: array
-            items:
-              $ref: '#/components/schemas/Mode'
-          explode: false
-
-        - name: directModes
-          in: query
-          required: false
-          description: |
-            Optional. Default is `WALK` which will compute walking routes as direct connections.
-            
-            Modes used for direction connections from start to destination without using transit.
-            Results will be returned on the `direct` key.
-            
-            Note: Direct connections will only be returned on the first call. For paging calls, they can be omitted.
-            
-            Note: Transit connections that are slower than the fastest direct connection will not show up.
-            This is being used as a cut-off during transit routing to speed up the search.
-            To prevent this, it's possible to send two separate requests (one with only `transitModes` and one with only `directModes`).
-            
-            Only non-transit modes such as `WALK`, `BIKE`, `CAR`, `BIKE_SHARING`, etc. can be used.
-          schema:
-            default:
-              - WALK
-            type: array
-            items:
-              $ref: '#/components/schemas/Mode'
-          explode: false
-
-        - name: preTransitModes
-          in: query
-          required: false
-          description: |
-            Optional. Default is `WALK`. Only applies if the `from` place is a coordinate (not a transit stop). Does not apply to direct connections (see `directModes`).
-            
-            A list of modes that are allowed to be used from the `from` coordinate to the first transit stop. Example: `WALK,BIKE_SHARING`.
-          schema:
-            default:
-              - WALK
-            type: array
-            items:
-              $ref: '#/components/schemas/Mode'
-          explode: false
-
-        - name: postTransitModes
-          in: query
-          required: false
-          description: |
-            Optional. Default is `WALK`. Only applies if the `to` place is a coordinate (not a transit stop). Does not apply to direct connections (see `directModes`).
-            
-            A list of modes that are allowed to be used from the last transit stop to the `to` coordinate. Example: `WALK,BIKE_SHARING`.
-          schema:
-            default:
-              - WALK
-            type: array
-            items:
-              $ref: '#/components/schemas/Mode'
-          explode: false
-
-        - name: numItineraries
-          in: query
-          required: false
-          description: |
-            The minimum number of itineraries to compute.
-            This is only relevant if `timetableView=true`.
-            The default value is 5.
-          schema:
-            type: integer
-            default: 5
-
-        - name: pageCursor
-          in: query
-          required: false
-          description: |
-            Use the cursor to go to the next "page" of itineraries.
-            Copy the cursor from the last response and keep the original request as is.
-            This will enable you to search for itineraries in the next or previous time-window.
-          schema:
-            type: string
-
-        - name: timetableView
-          in: query
-          required: false
-          description: |
-            Optional. Default is `true`.
-            
-            Search for the best trip options within a time window.
-            If true two itineraries are considered optimal
-            if one is better on arrival time (earliest wins)
-            and the other is better on departure time (latest wins).
-            In combination with arriveBy this parameter cover the following use cases:
-            
-            `timetable=false` = waiting for the first transit departure/arrival is considered travel time:
-              - `arriveBy=true`: event (e.g. a meeting) starts at 10:00 am,
-                compute the best journeys that arrive by that time (maximizes departure time)
-              - `arriveBy=false`: event (e.g. a meeting) ends at 11:00 am,
-                compute the best journeys that depart after that time
-            
-            `timetable=true` = optimize "later departure" + "earlier arrival" and give all options over a time window:
-              - `arriveBy=true`: the time window around `date` and `time` refers to the arrival time window
-              - `arriveBy=false`: the time window around `date` and `time` refers to the departure time window
-          schema:
-            type: boolean
-            default: true
-
-        - name: arriveBy
-          in: query
-          required: false
-          schema:
-            type: boolean
-            default: false
-          description: |
-            Optional. Default is `false`.
-            
-              - `arriveBy=true`: the parameters `date` and `time` refer to the arrival time
-              - `arriveBy=false`: the parameters `date` and `time` refer to the departure time
-
-        - name: searchWindow
-          in: query
-          required: false
-          description: |
-            Optional. Default is 2 hours which is `7200`.
-            
-            The length of the search-window in seconds. Default value two hours.
-            
-              - `arriveBy=true`: number of seconds between the earliest departure time and latest departure time
-              - `arriveBy=false`: number of seconds between the earliest arrival time and the latest arrival time
-          schema:
-            type: integer
-            default: 7200
-            minimum: 0
-
-        - name: requireBikeTransport
-          in: query
-          required: false
-          schema:
-            type: boolean
-            default: false
-          description: |
-            Optional. Default is `false`.
-            
-            If set to `true`, all used transit trips are required to allow bike carriage.
-
-        - name: maxPreTransitTime
-          in: query
-          required: false
-          description: |
-            Optional. Default is 15min which is `900`.
-            Maximum time in seconds for the first street leg.
-          schema:
-            type: integer
-            default: 900
-            minimum: 0
-
-        - name: maxPostTransitTime
-          in: query
-          required: false
-          description: |
-            Optional. Default is 15min which is `900`.
-            Maximum time in seconds for the last street leg.
-          schema:
-            type: integer
-            default: 900
-            minimum: 0
-
-        - name: maxDirectTime
-          in: query
-          required: false
-          description: |
-            Optional. Default is 30min which is `1800`.
-            Maximum time in seconds for direct connections.
-          schema:
-            type: integer
-            default: 1800
-            minimum: 0
       responses:
-        '200':
-          description: routing result
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                  - requestParameters
-                  - debugOutput
-                  - date
-                  - from
-                  - to
-                  - direct
-                  - itineraries
-                  - previousPageCursor
-                  - nextPageCursor
-                properties:
-                  requestParameters:
-                    description: "the routing query"
-                    type: object
-                    additionalProperties:
-                      type: string
-                  debugOutput:
-                    description: "debug statistics"
-                    type: object
-                    additionalProperties:
-                      type: integer
-                  from:
-                    $ref: '#/components/schemas/Place'
-                  to:
-                    $ref: '#/components/schemas/Place'
-                  direct:
-                    description: |
-                      Direct trips by `WALK`, `BIKE`, `CAR`, etc. without time-dependency.
-                      The starting time (`arriveBy=false`) / arrival time (`arriveBy=true`) is always the queried `time` parameter (set to \"now\" if not set).
-                      But all `direct` connections are meant to be independent of absolute times.
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Itinerary'
-                  itineraries:
-                    description: list of itineraries
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Itinerary'
-                  previousPageCursor:
-                    description: |
-                      Use the cursor to get the previous page of results. Insert the cursor into the request and post it to get the previous page.
-                      The previous page is a set of itineraries departing BEFORE the first itinerary in the result for a depart after search. When using the default sort order the previous set of itineraries is inserted before the current result.
-                    type: string
-                  nextPageCursor:
-                    description: |
-                      Use the cursor to get the next page of results. Insert the cursor into the request and post it to get the next page.
-                      The next page is a set of itineraries departing AFTER the last itinerary in this result.
-                    type: string
+        '200': $ref: '#/components/responses/routing-200'
 
   /api/v1/pt-taxi:
     get:
@@ -677,9 +322,33 @@ paths:
       summary: Extends the public transit routing of /api/v1/plan with taxi first and last legs
       operationId: pt-taxi
       parameters:
-        - $ref: '#/paths/~1api~1v1~1plan/get/parameters'
+        - $ref: '#/components/parameters/fromPlace'
+        - $ref: '#/components/parameters/toPlace'
+        - $ref: '#/components/parameters/via'
+        - $ref: '#/components/parameters/viaMinimumStay'
+        - $ref: '#/components/parameters/time'
+        - $ref: '#/components/parameters/maxTransfers'
+        - $ref: '#/components/parameters/maxHours'
+        - $ref: '#/components/parameters/minTransferTime'
+        - $ref: '#/components/parameters/additionalTransferTime'
+        - $ref: '#/components/parameters/transferTimeFactor'
+        - $ref: '#/components/parameters/maxMatchingDistance'
+        - $ref: '#/components/parameters/wheelchair'
+        - $ref: '#/components/parameters/transitModes'
+        - $ref: '#/components/parameters/directModes'
+        - $ref: '#/components/parameters/preTransitModes'
+        - $ref: '#/components/parameters/postTransitModes'
+        - $ref: '#/components/parameters/numItineraries'
+        - $ref: '#/components/parameters/pageCursor'
+        - $ref: '#/components/parameters/timetableView'
+        - $ref: '#/components/parameters/arriveBy'
+        - $ref: '#/components/parameters/searchWindow'
+        - $ref: '#/components/parameters/requireBikeTransport'
+        - $ref: '#/components/parameters/maxPreTransitTime'
+        - $ref: '#/components/parameters/maxPostTransitTime'
+        - $ref: '#/components/parameters/maxDirectTime'
       responses:
-        $ref: '#/paths/~1api~1v1~1plan/get/responses'
+        '200': $ref: '#/components/responses/routing-200'
 
   /api/v1/map/trips:
     get:
@@ -1451,357 +1120,414 @@ components:
           description: |
             optional; missing if no path was found with the wheelchair profile
             true if the wheelchair path uses an elevator
-parameters:
-  fromPlace:
-    name: fromPlace
-    in: query
-    required: true
-    description: \`latitude,longitude,level\` tuple in degrees OR stop id
-    schema:
-      type: string
 
-  toPlace:
-    name: toPlace
-    in: query
-    required: true
-    description: \`latitude,longitude,level\` tuple in degrees OR stop id
-    schema:
-      type: string
-
-  via:
-    name: via
-    in: query
-    required: false
-    description: |
-      List of via stops to visit (only stop IDs, no coordinates allowed for now).
-      Also see the optional parameter `viaMinimumStay` to set a set a minimum stay duration for each via stop.
-    schema:
-      type: array
-      maxItems: 2
-      items:
+  parameters:
+    fromPlace:
+      name: fromPlace
+      in: query
+      required: true
+      description: \`latitude,longitude,level\` tuple in degrees OR stop id
+      schema:
         type: string
-    explode: false
 
-  viaMinimumStay:
-    name: viaMinimumStay
-    in: query
-    required: false
-    description: |
-      Optional. If not set, the default is `0,0` - no stay required.
-      
-      For each `via` stop a minimum stay duration in minutes.
-      
-      The value `0` signals that it's allowed to stay in the same trip.
-      This enables via stays without counting a transfer and can lead 
-      to better connections with less transfers. Transfer connections can
-      still be found with `viaMinimumStay=0`.
-    schema:
-      default: [ 0, 0 ]
-      type: array
-      maxItems: 2
-      items:
+    toPlace:
+      name: toPlace
+      in: query
+      required: true
+      description: \`latitude,longitude,level\` tuple in degrees OR stop id
+      schema:
+        type: string
+
+    via:
+      name: via
+      in: query
+      required: false
+      description: |
+        List of via stops to visit (only stop IDs, no coordinates allowed for now).
+        Also see the optional parameter `viaMinimumStay` to set a set a minimum stay duration for each via stop.
+      schema:
+        type: array
+        maxItems: 2
+        items:
+          type: string
+      explode: false
+
+    viaMinimumStay:
+      name: viaMinimumStay
+      in: query
+      required: false
+      description: |
+        Optional. If not set, the default is `0,0` - no stay required.
+        
+        For each `via` stop a minimum stay duration in minutes.
+        
+        The value `0` signals that it's allowed to stay in the same trip.
+        This enables via stays without counting a transfer and can lead 
+        to better connections with less transfers. Transfer connections can
+        still be found with `viaMinimumStay=0`.
+      schema:
+        default: [ 0, 0 ]
+        type: array
+        maxItems: 2
+        items:
+          type: integer
+      explode: false
+
+    time:
+      name: time
+      in: query
+      required: false
+      description: |
+        Optional. Defaults to the current time.
+        
+        Departure time ($arriveBy=false) / arrival date ($arriveBy=true),
+      schema:
+        type: string
+        format: date-time
+
+    maxTransfers:
+      name: maxTransfers
+      in: query
+      required: false
+      description: |
+        The maximum number of allowed transfers.
+        If not provided, the routing uses the server-side default value
+        which is hardcoded and very high to cover all use cases.
+        
+        *Warning*: Use with care. Setting this too low can lead to
+        optimal (e.g. the fastest) journeys not being found.
+        If this value is too low to reach the destination at all,
+        it can lead to slow routing performance.
+      schema:
         type: integer
-    explode: false
 
-  time:
-    name: time
-    in: query
-    required: false
-    description: |
-      Optional. Defaults to the current time.
-      
-      Departure time ($arriveBy=false) / arrival date ($arriveBy=true),
-    schema:
-      type: string
-      format: date-time
+    maxHours:
+      name: maxHours
+      in: query
+      required: false
+      description: |
+        The maximum travel time in hours.
+        If not provided, the routing to uses the value
+        hardcoded in the server which is usually quite high.
+        
+        *Warning*: Use with care. Setting this too low can lead to
+        optimal (e.g. the least transfers) journeys not being found.
+        If this value is too low to reach the destination at all,
+        it can lead to slow routing performance.
+        
+        TODO: pass parameter to nigiri
+      schema:
+        type: number
 
-  maxTransfers:
-    name: maxTransfers
-    in: query
-    required: false
-    description: |
-      The maximum number of allowed transfers.
-      If not provided, the routing uses the server-side default value
-      which is hardcoded and very high to cover all use cases.
-      
-      *Warning*: Use with care. Setting this too low can lead to
-      optimal (e.g. the fastest) journeys not being found.
-      If this value is too low to reach the destination at all,
-      it can lead to slow routing performance.
-    schema:
-      type: integer
+    minTransferTime:
+      name: minTransferTime
+      in: query
+      required: false
+      description: |
+        Optional. Default is 0 minutes.
+        
+        Minimum transfer time for each transfer in minutes.
+      schema:
+        type: integer
+        default: 0
 
-  maxHours:
-    name: maxHours
-    in: query
-    required: false
-    description: |
-      The maximum travel time in hours.
-      If not provided, the routing to uses the value
-      hardcoded in the server which is usually quite high.
-      
-      *Warning*: Use with care. Setting this too low can lead to
-      optimal (e.g. the least transfers) journeys not being found.
-      If this value is too low to reach the destination at all,
-      it can lead to slow routing performance.
-      
-      TODO: pass parameter to nigiri
-    schema:
-      type: number
+    additionalTransferTime:
+      name: additionalTransferTime
+      in: query
+      required: false
+      description: |
+        Optional. Default is 0 minutes.
+        
+        Additional transfer time reserved for each transfer in minutes.
+      schema:
+        type: integer
+        default: 0
 
-  minTransferTime:
-    name: minTransferTime
-    in: query
-    required: false
-    description: |
-      Optional. Default is 0 minutes.
-      
-      Minimum transfer time for each transfer in minutes.
-    schema:
-      type: integer
-      default: 0
+    transferTimeFactor:
+      name: transferTimeFactor
+      in: query
+      required: false
+      description: |
+        Optional. Default is 1.0
+        
+        Factor to multiply minimum required transfer times with.
+        Values smaller than 1.0 are not supported.
+      schema:
+        type: number
+        default: 1.0
 
-  additionalTransferTime:
-    name: additionalTransferTime
-    in: query
-    required: false
-    description: |
-      Optional. Default is 0 minutes.
-      
-      Additional transfer time reserved for each transfer in minutes.
-    schema:
-      type: integer
-      default: 0
+    maxMatchingDistance:
+      name: maxMatchingDistance
+      in: query
+      required: true
+      description: |
+        Optional. Default is 25 meters.
+        
+        Maximum matching distance in meters to match geo coordinates to the street network.
+      schema:
+        type: number
+        default: 25
 
-  transferTimeFactor:
-    name: transferTimeFactor
-    in: query
-    required: false
-    description: |
-      Optional. Default is 1.0
-      
-      Factor to multiply minimum required transfer times with.
-      Values smaller than 1.0 are not supported.
-    schema:
-      type: number
-      default: 1.0
+    wheelchair:
+      name: wheelchair
+      in: query
+      description: Whether the trip must be wheelchair accessible.
+      required: false
+      schema:
+        type: boolean
+        default: false
 
-  maxMatchingDistance:
-    name: maxMatchingDistance
-    in: query
-    required: true
-    description: |
-      Optional. Default is 25 meters.
-      
-      Maximum matching distance in meters to match geo coordinates to the street network.
-    schema:
-      type: number
-      default: 25
+    transitModes:
+      name: transitModes
+      in: query
+      required: false
+      description: |
+        Optional. Default is `TRANSIT` which allows all transit modes (no restriction).
+        Allowed modes for the transit part. If empty, no transit connections will be computed.
+        For example, this can be used to allow only `METRO,SUBWAY,TRAM`.
+      schema:
+        default:
+          - TRANSIT
+        type: array
+        items:
+          $ref: '#/components/schemas/Mode'
+      explode: false
 
-  wheelchair:
-    name: wheelchair
-    in: query
-    description: Whether the trip must be wheelchair accessible.
-    required: false
-    schema:
-      type: boolean
-      default: false
+    directModes:
+      name: directModes
+      in: query
+      required: false
+      description: |
+        Optional. Default is `WALK` which will compute walking routes as direct connections.
+        
+        Modes used for direction connections from start to destination without using transit.
+        Results will be returned on the `direct` key.
+        
+        Note: Direct connections will only be returned on the first call. For paging calls, they can be omitted.
+        
+        Note: Transit connections that are slower than the fastest direct connection will not show up.
+        This is being used as a cut-off during transit routing to speed up the search.
+        To prevent this, it's possible to send two separate requests (one with only `transitModes` and one with only `directModes`).
+        
+        Only non-transit modes such as `WALK`, `BIKE`, `CAR`, `BIKE_SHARING`, etc. can be used.
+      schema:
+        default:
+          - WALK
+        type: array
+        items:
+          $ref: '#/components/schemas/Mode'
+      explode: false
 
-  transitModes:
-    name: transitModes
-    in: query
-    required: false
-    description: |
-      Optional. Default is `TRANSIT` which allows all transit modes (no restriction).
-      Allowed modes for the transit part. If empty, no transit connections will be computed.
-      For example, this can be used to allow only `METRO,SUBWAY,TRAM`.
-    schema:
-      default:
-        - TRANSIT
-      type: array
-      items:
-        $ref: '#/components/schemas/Mode'
-    explode: false
+    preTransitModes:
+      name: preTransitModes
+      in: query
+      required: false
+      description: |
+        Optional. Default is `WALK`. Only applies if the `from` place is a coordinate (not a transit stop). Does not apply to direct connections (see `directModes`).
+        
+        A list of modes that are allowed to be used from the `from` coordinate to the first transit stop. Example: `WALK,BIKE_SHARING`.
+      schema:
+        default:
+          - WALK
+        type: array
+        items:
+          $ref: '#/components/schemas/Mode'
+      explode: false
 
-  directModes:
-    name: directModes
-    in: query
-    required: false
-    description: |
-      Optional. Default is `WALK` which will compute walking routes as direct connections.
-      
-      Modes used for direction connections from start to destination without using transit.
-      Results will be returned on the `direct` key.
-      
-      Note: Direct connections will only be returned on the first call. For paging calls, they can be omitted.
-      
-      Note: Transit connections that are slower than the fastest direct connection will not show up.
-      This is being used as a cut-off during transit routing to speed up the search.
-      To prevent this, it's possible to send two separate requests (one with only `transitModes` and one with only `directModes`).
-      
-      Only non-transit modes such as `WALK`, `BIKE`, `CAR`, `BIKE_SHARING`, etc. can be used.
-    schema:
-      default:
-        - WALK
-      type: array
-      items:
-        $ref: '#/components/schemas/Mode'
-    explode: false
+    postTransitModes:
+      name: postTransitModes
+      in: query
+      required: false
+      description: |
+        Optional. Default is `WALK`. Only applies if the `to` place is a coordinate (not a transit stop). Does not apply to direct connections (see `directModes`).
+        
+        A list of modes that are allowed to be used from the last transit stop to the `to` coordinate. Example: `WALK,BIKE_SHARING`.
+      schema:
+        default:
+          - WALK
+        type: array
+        items:
+          $ref: '#/components/schemas/Mode'
+      explode: false
 
-  preTransitModes:
-    name: preTransitModes
-    in: query
-    required: false
-    description: |
-      Optional. Default is `WALK`. Only applies if the `from` place is a coordinate (not a transit stop). Does not apply to direct connections (see `directModes`).
-      
-      A list of modes that are allowed to be used from the `from` coordinate to the first transit stop. Example: `WALK,BIKE_SHARING`.
-    schema:
-      default:
-        - WALK
-      type: array
-      items:
-        $ref: '#/components/schemas/Mode'
-    explode: false
+    numItineraries:
+      name: numItineraries
+      in: query
+      required: false
+      description: |
+        The minimum number of itineraries to compute.
+        This is only relevant if `timetableView=true`.
+        The default value is 5.
+      schema:
+        type: integer
+        default: 5
 
-  postTransitModes:
-    name: postTransitModes
-    in: query
-    required: false
-    description: |
-      Optional. Default is `WALK`. Only applies if the `to` place is a coordinate (not a transit stop). Does not apply to direct connections (see `directModes`).
-      
-      A list of modes that are allowed to be used from the last transit stop to the `to` coordinate. Example: `WALK,BIKE_SHARING`.
-    schema:
-      default:
-        - WALK
-      type: array
-      items:
-        $ref: '#/components/schemas/Mode'
-    explode: false
+    pageCursor:
+      name: pageCursor
+      in: query
+      required: false
+      description: |
+        Use the cursor to go to the next "page" of itineraries.
+        Copy the cursor from the last response and keep the original request as is.
+        This will enable you to search for itineraries in the next or previous time-window.
+      schema:
+        type: string
 
-  numItineraries:
-    name: numItineraries
-    in: query
-    required: false
-    description: |
-      The minimum number of itineraries to compute.
-      This is only relevant if `timetableView=true`.
-      The default value is 5.
-    schema:
-      type: integer
-      default: 5
+    timetableView:
+      name: timetableView
+      in: query
+      required: false
+      description: |
+        Optional. Default is `true`.
+        
+        Search for the best trip options within a time window.
+        If true two itineraries are considered optimal
+        if one is better on arrival time (earliest wins)
+        and the other is better on departure time (latest wins).
+        In combination with arriveBy this parameter cover the following use cases:
+        
+        `timetable=false` = waiting for the first transit departure/arrival is considered travel time:
+          - `arriveBy=true`: event (e.g. a meeting) starts at 10:00 am,
+            compute the best journeys that arrive by that time (maximizes departure time)
+          - `arriveBy=false`: event (e.g. a meeting) ends at 11:00 am,
+            compute the best journeys that depart after that time
+        
+        `timetable=true` = optimize "later departure" + "earlier arrival" and give all options over a time window:
+          - `arriveBy=true`: the time window around `date` and `time` refers to the arrival time window
+          - `arriveBy=false`: the time window around `date` and `time` refers to the departure time window
+      schema:
+        type: boolean
+        default: true
 
-  pageCursor:
-    name: pageCursor
-    in: query
-    required: false
-    description: |
-      Use the cursor to go to the next "page" of itineraries.
-      Copy the cursor from the last response and keep the original request as is.
-      This will enable you to search for itineraries in the next or previous time-window.
-    schema:
-      type: string
+    arriveBy:
+      name: arriveBy
+      in: query
+      required: false
+      schema:
+        type: boolean
+        default: false
+      description: |
+        Optional. Default is `false`.
+        
+          - `arriveBy=true`: the parameters `date` and `time` refer to the arrival time
+          - `arriveBy=false`: the parameters `date` and `time` refer to the departure time
 
-  timetableView:
-    name: timetableView
-    in: query
-    required: false
-    description: |
-      Optional. Default is `true`.
-      
-      Search for the best trip options within a time window.
-      If true two itineraries are considered optimal
-      if one is better on arrival time (earliest wins)
-      and the other is better on departure time (latest wins).
-      In combination with arriveBy this parameter cover the following use cases:
-      
-      `timetable=false` = waiting for the first transit departure/arrival is considered travel time:
-        - `arriveBy=true`: event (e.g. a meeting) starts at 10:00 am,
-          compute the best journeys that arrive by that time (maximizes departure time)
-        - `arriveBy=false`: event (e.g. a meeting) ends at 11:00 am,
-          compute the best journeys that depart after that time
-      
-      `timetable=true` = optimize "later departure" + "earlier arrival" and give all options over a time window:
-        - `arriveBy=true`: the time window around `date` and `time` refers to the arrival time window
-        - `arriveBy=false`: the time window around `date` and `time` refers to the departure time window
-    schema:
-      type: boolean
-      default: true
+    searchWindow:
+      name: searchWindow
+      in: query
+      required: false
+      description: |
+        Optional. Default is 2 hours which is `7200`.
+        
+        The length of the search-window in seconds. Default value two hours.
+        
+          - `arriveBy=true`: number of seconds between the earliest departure time and latest departure time
+          - `arriveBy=false`: number of seconds between the earliest arrival time and the latest arrival time
+      schema:
+        type: integer
+        default: 7200
+        minimum: 0
 
-  arriveBy:
-    name: arriveBy
-    in: query
-    required: false
-    schema:
-      type: boolean
-      default: false
-    description: |
-      Optional. Default is `false`.
-      
-        - `arriveBy=true`: the parameters `date` and `time` refer to the arrival time
-        - `arriveBy=false`: the parameters `date` and `time` refer to the departure time
+    requireBikeTransport:
+      name: requireBikeTransport
+      in: query
+      required: false
+      schema:
+        type: boolean
+        default: false
+      description: |
+        Optional. Default is `false`.
+        
+        If set to `true`, all used transit trips are required to allow bike carriage.
 
-  searchWindow:
-    name: searchWindow
-    in: query
-    required: false
-    description: |
-      Optional. Default is 2 hours which is `7200`.
-      
-      The length of the search-window in seconds. Default value two hours.
-      
-        - `arriveBy=true`: number of seconds between the earliest departure time and latest departure time
-        - `arriveBy=false`: number of seconds between the earliest arrival time and the latest arrival time
-    schema:
-      type: integer
-      default: 7200
-      minimum: 0
+    maxPreTransitTime:
+      name: maxPreTransitTime
+      in: query
+      required: false
+      description: |
+        Optional. Default is 15min which is `900`.
+        Maximum time in seconds for the first street leg.
+      schema:
+        type: integer
+        default: 900
+        minimum: 0
 
-  requireBikeTransport:
-    name: requireBikeTransport
-    in: query
-    required: false
-    schema:
-      type: boolean
-      default: false
-    description: |
-      Optional. Default is `false`.
-      
-      If set to `true`, all used transit trips are required to allow bike carriage.
+    maxPostTransitTime:
+      name: maxPostTransitTime
+      in: query
+      required: false
+      description: |
+        Optional. Default is 15min which is `900`.
+        Maximum time in seconds for the last street leg.
+      schema:
+        type: integer
+        default: 900
+        minimum: 0
 
-  maxPreTransitTime:
-    name: maxPreTransitTime
-    in: query
-    required: false
-    description: |
-      Optional. Default is 15min which is `900`.
-      Maximum time in seconds for the first street leg.
-    schema:
-      type: integer
-      default: 900
-      minimum: 0
+    maxDirectTime:
+      name: maxDirectTime
+      in: query
+      required: false
+      description: |
+        Optional. Default is 30min which is `1800`.
+        Maximum time in seconds for direct connections.
+      schema:
+        type: integer
+        default: 1800
+        minimum: 0
 
-  maxPostTransitTime:
-    name: maxPostTransitTime
-    in: query
-    required: false
-    description: |
-      Optional. Default is 15min which is `900`.
-      Maximum time in seconds for the last street leg.
-    schema:
-      type: integer
-      default: 900
-      minimum: 0
-
-  maxDirectTime:
-    name: maxDirectTime
-    in: query
-    required: false
-    description: |
-      Optional. Default is 30min which is `1800`.
-      Maximum time in seconds for direct connections.
-    schema:
-      type: integer
-      default: 1800
-      minimum: 0
+  responses:
+    routing-200:
+      description: routing result
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - requestParameters
+              - debugOutput
+              - date
+              - from
+              - to
+              - direct
+              - itineraries
+              - previousPageCursor
+              - nextPageCursor
+            properties:
+              requestParameters:
+                description: "the routing query"
+                type: object
+                additionalProperties:
+                  type: string
+              debugOutput:
+                description: "debug statistics"
+                type: object
+                additionalProperties:
+                  type: integer
+              from:
+                $ref: '#/components/schemas/Place'
+              to:
+                $ref: '#/components/schemas/Place'
+              direct:
+                description: |
+                  Direct trips by `WALK`, `BIKE`, `CAR`, etc. without time-dependency.
+                  The starting time (`arriveBy=false`) / arrival time (`arriveBy=true`) is always the queried `time` parameter (set to \"now\" if not set).
+                  But all `direct` connections are meant to be independent of absolute times.
+                type: array
+                items:
+                  $ref: '#/components/schemas/Itinerary'
+              itineraries:
+                description: list of itineraries
+                type: array
+                items:
+                  $ref: '#/components/schemas/Itinerary'
+              previousPageCursor:
+                description: |
+                  Use the cursor to get the previous page of results. Insert the cursor into the request and post it to get the previous page.
+                  The previous page is a set of itineraries departing BEFORE the first itinerary in the result for a depart after search. When using the default sort order the previous set of itineraries is inserted before the current result.
+                type: string
+              nextPageCursor:
+                description: |
+                  Use the cursor to get the next page of results. Insert the cursor into the request and post it to get the next page.
+                  The next page is a set of itineraries departing AFTER the last itinerary in this result.
+                type: string
