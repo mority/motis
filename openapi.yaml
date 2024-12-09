@@ -670,6 +670,17 @@ paths:
                       The next page is a set of itineraries departing AFTER the last itinerary in this result.
                     type: string
 
+  /api/v1/pt-taxi:
+    get:
+      tags:
+        - routing
+      summary: Extends the public transit routing of /api/v1/plan with taxi first and last legs
+      operationId: pt-taxi
+      parameters:
+        $ref: '#/paths/~1api~1v1~1plan/get/parameters'
+      responses:
+        $ref: '#/paths/~1api~1v1~1plan/get/responses'
+
   /api/v1/map/trips:
     get:
       tags:
