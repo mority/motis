@@ -28,6 +28,7 @@ struct config {
 
   bool requires_rt_timetable_updates() const;
   bool has_gbfs_feeds() const;
+  bool has_vdv_servers() const;
 
   bool operator==(config const&) const = default;
 
@@ -120,6 +121,19 @@ struct config {
     std::optional<std::string> proxy_{};
   };
   std::optional<gbfs> gbfs_{};
+
+  struct vdv {
+    bool operator==(vdv const&) const = default;
+
+    struct aus_server {
+      bool operator==(aus_server const&) const = default;
+      std::string addr_{};
+    };
+
+    std::map<std::string, aus_server> aus_servers_{};
+    std::string client_name_{};
+  };
+  std::optional<vdv> vdv_{};
 
   bool street_routing_{false};
   bool osr_footpath_{false};

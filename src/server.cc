@@ -81,6 +81,9 @@ int server(data d, config const& c) {
     qr.route("GET", "/tiles/", ep::tiles{*d.tiles_});
   }
 
+  if (c.has_vdv_servers()) {
+  }
+
   auto const server_config = c.server_.value_or(config::server{});
   qr.serve_files(server_config.web_folder_);
   qr.enable_cors();
@@ -117,6 +120,10 @@ int server(data d, config const& c) {
       gbfs_update_ioc->run();
     });
   }
+
+  // get vdv client endpoints online
+
+  // start vdv update thread
 
   auto const work_guard = asio::make_work_guard(workers);
   auto threads = std::vector<std::thread>(

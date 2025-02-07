@@ -166,6 +166,10 @@ bool config::has_gbfs_feeds() const {
   return gbfs_.has_value() && !gbfs_->feeds_.empty();
 }
 
+bool config::has_vdv_servers() const {
+  return vdv_.has_value() && !vdv_->aus_servers_.empty();
+}
+
 }  // namespace motis
 
 // ====================

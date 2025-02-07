@@ -58,3 +58,7 @@
   url=git@github.com:motis-project/lz4.git
   branch=dev
   commit=c4765545ebb14b0a56c663e21923166923f8280e
+[vdv]
+  url=git@github.com:motis-project/vdv.git
+  branch=master
+  commit=d2a02aabc427f1be86da29c9c649dcf24e8e60d5
