@@ -7,7 +7,7 @@
 
 namespace motis::odm {
 
-constexpr auto const kODMTransferBuffer = nigiri::duration_t{5};
+constexpr auto const kODMTransferBuffer = std::int64_t{5 * 60 * 1000 /* ms */};
 constexpr auto const kWalk =
     static_cast<nigiri::transport_mode_id_t>(api::ModeEnum::WALK);
 

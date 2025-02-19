@@ -16,9 +16,10 @@ struct routing;
 
 namespace motis::odm {
 
-struct direct_ride {
-  nigiri::unixtime_t dep_;
-  nigiri::unixtime_t arr_;
+struct ride {
+  std::int64_t dep_;
+  std::int64_t arr_;
+  nigiri::location_idx_t stop_{nigiri::location_idx_t::invalid()};
 };
 
 struct capacities {
@@ -43,13 +44,13 @@ struct prima {
   nigiri::event_type fixed_;
   capacities cap_;
 
-  std::vector<nigiri::routing::start> from_rides_{};
-  std::vector<nigiri::routing::start> to_rides_{};
-  std::vector<direct_ride> direct_rides_{};
+  std::vector<ride> from_rides_{};
+  std::vector<ride> to_rides_{};
+  std::vector<ride> direct_rides_{};
 
-  std::vector<nigiri::routing::start> prev_from_rides_{};
-  std::vector<nigiri::routing::start> prev_to_rides_{};
-  std::vector<direct_ride> prev_direct_rides_{};
+  std::vector<ride> prev_from_rides_{};
+  std::vector<ride> prev_to_rides_{};
+  std::vector<ride> prev_direct_rides_{};
 
   std::vector<nigiri::routing::journey> odm_journeys_{};
 };
