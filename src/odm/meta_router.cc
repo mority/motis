@@ -80,6 +80,12 @@ void print_time(auto const& start, std::string_view name) {
                    std::chrono::steady_clock::now() - start));
 }
 
+std::int64_t to_millis(n::unixtime_t const t) {
+  return std::chrono::duration_cast<std::chrono::milliseconds>(
+             t.time_since_epoch())
+      .count();
+}
+
 meta_router::meta_router(ep::routing const& r,
                          api::plan_params const& query,
                          std::vector<api::ModeEnum> const& pre_transit_modes,
@@ -151,7 +157,7 @@ n::interval<n::unixtime_t> get_odm_intvl(
                                           start_intvl.to_};
 }
 
-n::duration_t init_direct(std::vector<direct_ride>& direct_rides,
+n::duration_t init_direct(std::vector<ride>& direct_rides,
                           ep::routing const& r,
                           elevators const* e,
                           gbfs::gbfs_routing_data& gbfs,
@@ -170,12 +176,14 @@ n::duration_t init_direct(std::vector<direct_ride>& direct_rides,
              std::chrono::floor<std::chrono::hours>(intvl.to_ - duration) +
              duration;
          intvl.contains(arr); arr -= kODMDirectPeriod) {
-      direct_rides.push_back({.dep_ = arr - duration, .arr_ = arr});
+      direct_rides.push_back(
+          {.dep_ = to_millis(arr - duration), .arr_ = to_millis(arr)});
     }
   } else {
     for (auto dep = std::chrono::ceil<std::chrono::hours>(intvl.from_);
          intvl.contains(dep); dep += kODMDirectPeriod) {
-      direct_rides.push_back({.dep_ = dep, .arr_ = dep + duration});
+      direct_rides.push_back(
+          {.dep_ = to_millis(dep), .arr_ = to_millis(dep + duration)});
     }
   }
   return duration;
