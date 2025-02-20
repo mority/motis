@@ -250,24 +250,13 @@ TEST(odm, prima_update) {
       .to_ = {1.0, 1.0},
       .fixed_ = n::event_type::kDep,
       .cap_ = {.wheelchairs_ = 1, .bikes_ = 0, .passengers_ = 1, .luggage_ = 0},
-      .from_rides_ = {{.time_at_start_ = n::unixtime_t{10h},
-                       .time_at_stop_ = n::unixtime_t{11h},
-                       .stop_ = get_loc_idx("A")},
-                      {.time_at_start_ = n::unixtime_t{11h},
-                       .time_at_stop_ = n::unixtime_t{12h},
-                       .stop_ = get_loc_idx("A")},
-                      {.time_at_start_ = n::unixtime_t{11h},
-                       .time_at_stop_ = n::unixtime_t{12h},
-                       .stop_ = get_loc_idx("B")}},
-      .to_rides_ = {{.time_at_start_ = n::unixtime_t{14h},
-                     .time_at_stop_ = n::unixtime_t{13h},
-                     .stop_ = get_loc_idx("C")},
-                    {.time_at_start_ = n::unixtime_t{15h},
-                     .time_at_stop_ = n::unixtime_t{14h},
-                     .stop_ = get_loc_idx("D")}},
-      .direct_rides_ = {
-          {.dep_ = n::unixtime_t{10h}, .arr_ = n::unixtime_t{11h}},
-          {.dep_ = n::unixtime_t{11h}, .arr_ = n::unixtime_t{12h}}}};
+      .from_rides_ = {{.dep_ = 10h, .arr_ = 11h, .stop_ = get_loc_idx("A")},
+                      {.dep_ = 11h, .arr_ = 12h, .stop_ = get_loc_idx("A")},
+                      {.dep_ = 11h, .arr_ = 12h, .stop_ = get_loc_idx("B")}},
+      .to_rides_ = {{.dep_ = 13h, .arr_ = 14h, .stop_ = get_loc_idx("C")},
+                    {.dep_ = 14h, .arr_ = 15h, .stop_ = get_loc_idx("D")}},
+      .direct_rides_ = {{.dep_ = 10h, .arr_ = 11h},
+                        {.dep_ = 11h, .arr_ = 12h}}};
 
   EXPECT_EQ(kExpectedInitial, p.get_prima_request(tt));
   EXPECT_FALSE(p.blacklist_update(invalid_response));

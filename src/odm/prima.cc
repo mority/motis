@@ -20,6 +20,15 @@ namespace json = boost::json;
 
 static constexpr auto const kInfeasible = std::chrono::milliseconds::max();
 
+n::unixtime_t to_unix(std::chrono::milliseconds const t) {
+  return n::unixtime_t{std::chrono::duration_cast<n::i32_minutes>(t)};
+}
+
+std::chrono::milliseconds to_millis(n::unixtime_t const t) {
+  return std::chrono::duration_cast<std::chrono::milliseconds>(
+      t.time_since_epoch());
+}
+
 void prima::init(api::Place const& from,
                  api::Place const& to,
                  api::plan_params const& query) {
@@ -34,11 +43,6 @@ void prima::init(api::Place const& from,
       .bikes_ = static_cast<std::uint8_t>(query.requireBikeTransport_ ? 1 : 0),
       .passengers_ = 1U,
       .luggage_ = 0U};
-}
-
-n::unixtime_t to_unix(std::int64_t const t) {
-  return n::unixtime_t{
-      std::chrono::duration_cast<n::i32_minutes>(std::chrono::milliseconds{t})};
 }
 
 json::array to_json(std::vector<ride> const& v,
@@ -174,8 +178,11 @@ void update_direct_rides(std::vector<ride>& rides, json::array const& update) {
   rides.clear();
   for (auto const& ride : update) {
     if (!ride.is_null()) {
-      rides.push_back({ride.as_object().at("pickupTime").as_int64(),
-                       ride.as_object().at("dropoffTime").as_int64()});
+      rides.push_back({.dep_ =
+                           std::chrono::milliseconds{
+                               ride.as_object().at("pickupTime").as_int64()},
+                       .arr_ = std::chrono::milliseconds{
+                           ride.as_object().at("dropoffTime").as_int64()}});
     }
   }
 }

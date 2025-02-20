@@ -80,12 +80,6 @@ void print_time(auto const& start, std::string_view name) {
                    std::chrono::steady_clock::now() - start));
 }
 
-std::int64_t to_millis(n::unixtime_t const t) {
-  return std::chrono::duration_cast<std::chrono::milliseconds>(
-             t.time_since_epoch())
-      .count();
-}
-
 meta_router::meta_router(ep::routing const& r,
                          api::plan_params const& query,
                          std::vector<api::ModeEnum> const& pre_transit_modes,
@@ -189,7 +183,7 @@ n::duration_t init_direct(std::vector<ride>& direct_rides,
   return duration;
 }
 
-void init_pt(std::vector<n::routing::start>& rides,
+void init_pt(std::vector<ride>& rides,
              ep::routing const& r,
              osr::location const& l,
              osr::direction dir,
@@ -213,15 +207,22 @@ void init_pt(std::vector<n::routing::start>& rides,
     o.duration_ += kODMTransferBuffer;
   }
 
-  rides.clear();
-  rides.reserve(offsets.size() * 2);
-
+  auto const fwd = dir == osr::direction::kForward;
+  auto starts = std::vector<n::routing::start>{};
+  starts.reserve(offsets.size() * 2);
   n::routing::get_starts(
-      dir == osr::direction::kForward ? n::direction::kForward
-                                      : n::direction::kBackward,
-      tt, rtt, intvl, offsets, {}, n::routing::kMaxTravelTime,
-      location_match_mode, false, rides, true, start_time.prf_idx_,
-      start_time.transfer_time_settings_);
+      fwd ? n::direction::kForward : n::direction::kBackward, tt, rtt, intvl,
+      offsets, {}, n::routing::kMaxTravelTime, location_match_mode, false,
+      starts, true, start_time.prf_idx_, start_time.transfer_time_settings_);
+
+  rides.clear();
+  rides.reserve(starts.size());
+  for (auto const& s : starts) {
+    rides.push_back(
+        {.dep_ = to_millis(fwd ? s.time_at_start_ : s.time_at_stop_),
+         .arr_ = to_millis(fwd ? s.time_at_stop_ : s.time_at_start_),
+         .stop_ = s.stop_});
+  }
 }
 
 void meta_router::init_prima(n::interval<n::unixtime_t> const& odm_intvl) {
@@ -265,23 +266,15 @@ void meta_router::init_prima(n::interval<n::unixtime_t> const& odm_intvl) {
   std::erase(dest_modes_, api::ModeEnum::ODM);
 }
 
-bool ride_comp(n::routing::start const& a, n::routing::start const& b) {
-  return std::tie(a.stop_, a.time_at_start_, a.time_at_stop_) <
-         std::tie(b.stop_, b.time_at_start_, b.time_at_stop_);
-}
-
-auto ride_time_halves(std::vector<n::routing::start>& rides) {
+auto ride_time_halves(std::vector<ride>& rides) {
   utl::sort(rides, [](auto const& a, auto const& b) {
-    auto const ride_time = [](auto const& ride) {
-      return std::chrono::abs(ride.time_at_stop_ - ride.time_at_start_);
-    };
-    return ride_time(a) < ride_time(b);
+    return a.duration() < b.duration();
   });
   auto const half = rides.size() / 2;
   auto lo = rides | std::views::take(half);
   auto hi = rides | std::views::drop(half);
-  std::ranges::sort(lo, ride_comp);
-  std::ranges::sort(hi, ride_comp);
+  std::ranges::sort(lo, std::less<>{});
+  std::ranges::sort(hi, std::less<>{});
   return std::pair{lo, hi};
 }
 
@@ -293,25 +286,24 @@ auto get_td_offsets(auto const& rides) {
         td_offsets.emplace(from_it->stop_,
                            std::vector<n::routing::td_offset>{});
         for (auto const& r : n::it_range{from_it, to_it}) {
-          auto const dep = std::min(r.time_at_stop_, r.time_at_start_);
-          auto const dur = std::chrono::abs(r.time_at_stop_ - r.time_at_start_);
           if (td_offsets.at(from_it->stop_).size() > 1) {
             auto last = rbegin(td_offsets.at(from_it->stop_));
             auto const second_last = std::next(last);
-            if (dep ==
-                std::clamp(dep, second_last->valid_from_, last->valid_from_)) {
+            if (r.unix_dep() == std::clamp(r.unix_dep(),
+                                           second_last->valid_from_,
+                                           last->valid_from_)) {
               // increase validity interval of last offset
-              last->valid_from_ = dep + dur;
+              last->valid_from_ = r.arr_unix();
               continue;
             }
           }
           // add new offset
           td_offsets.at(from_it->stop_)
-              .push_back({.valid_from_ = dep,
-                          .duration_ = dur,
+              .push_back({.valid_from_ = r.unix_dep(),
+                          .duration_ = r.duration(),
                           .transport_mode_id_ = kOdmTransportModeId});
           td_offsets.at(from_it->stop_)
-              .push_back({.valid_from_ = dep + dur,
+              .push_back({.valid_from_ = r.arr_unix(),
                           .duration_ = n::footpath::kMaxDuration,
                           .transport_mode_id_ = kOdmTransportModeId});
         }
@@ -426,22 +418,22 @@ void extract_rides() {
   for (auto const& j : p->odm_journeys_) {
     if (!j.legs_.empty()) {
       if (is_odm_leg(j.legs_.front())) {
-        p->from_rides_.push_back({.time_at_start_ = j.legs_.front().dep_time_,
-                                  .time_at_stop_ = j.legs_.front().arr_time_,
+        p->from_rides_.push_back({.dep_ = to_millis(j.legs_.front().dep_time_),
+                                  .arr_ = to_millis(j.legs_.front().arr_time_),
                                   .stop_ = j.legs_.front().to_});
       }
     }
     if (j.legs_.size() > 1) {
       if (is_odm_leg(j.legs_.back())) {
-        p->to_rides_.push_back({.time_at_start_ = j.legs_.back().arr_time_,
-                                .time_at_stop_ = j.legs_.back().dep_time_,
+        p->to_rides_.push_back({.dep_ = to_millis(j.legs_.back().arr_time_),
+                                .arr_ = to_millis(j.legs_.back().dep_time_),
                                 .stop_ = j.legs_.back().from_});
       }
     }
   }
 
-  utl::erase_duplicates(p->from_rides_, ride_comp, std::equal_to<>{});
-  utl::erase_duplicates(p->to_rides_, ride_comp, std::equal_to<>{});
+  utl::erase_duplicates(p->from_rides_, std::less<>{}, std::equal_to<>{});
+  utl::erase_duplicates(p->to_rides_, std::less<>{}, std::equal_to<>{});
 }
 
 void meta_router::add_direct() const {
@@ -460,11 +452,11 @@ void meta_router::add_direct() const {
 
   for (auto const& d : p->direct_rides_) {
     p->odm_journeys_.push_back(n::routing::journey{
-        .legs_ = {{n::direction::kForward, from_l, to_l, d.dep_, d.arr_,
-                   n::routing::offset{to_l, std::chrono::abs(d.arr_ - d.dep_),
-                                      kOdmTransportModeId}}},
-        .start_time_ = d.dep_,
-        .dest_time_ = d.arr_,
+        .legs_ =
+            {{n::direction::kForward, from_l, to_l, d.unix_dep(), d.arr_unix(),
+              n::routing::offset{to_l, d.duration(), kOdmTransportModeId}}},
+        .start_time_ = d.unix_dep(),
+        .dest_time_ = d.arr_unix(),
         .dest_ = to_l,
         .transfers_ = 0U});
   }
