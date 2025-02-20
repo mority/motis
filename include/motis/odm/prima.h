@@ -17,8 +17,8 @@ struct routing;
 namespace motis::odm {
 
 struct ride {
-  std::int64_t dep_;
-  std::int64_t arr_;
+  std::chrono::milliseconds dep_;
+  std::chrono::milliseconds arr_;
   nigiri::location_idx_t stop_{nigiri::location_idx_t::invalid()};
 };
 

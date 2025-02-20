@@ -18,7 +18,7 @@ namespace motis::odm {
 namespace n = nigiri;
 namespace json = boost::json;
 
-static constexpr auto const kInfeasible = std::numeric_limits<int64_t>::min();
+static constexpr auto const kInfeasible = std::chrono::milliseconds::max();
 
 void prima::init(api::Place const& from,
                  api::Place const& to,
@@ -153,9 +153,14 @@ void update_pt_rides(std::vector<ride>& rides,
                          .arr_ = kInfeasible,
                          .stop_ = prev_it->stop_});
       } else {
-        rides.push_back({.dep_ = event.as_object().at("pickupTime").as_int64(),
-                         .arr_ = event.as_object().at("dropoffTime").as_int64(),
-                         .stop_ = prev_it->stop_});
+        rides.push_back(
+            {.dep_ =
+                 std::chrono::milliseconds{
+                     event.as_object().at("pickupTime").as_int64()},
+             .arr_ =
+                 std::chrono::milliseconds{
+                     event.as_object().at("dropoffTime").as_int64()},
+             .stop_ = prev_it->stop_});
       }
       ++prev_it;
       if (prev_it == end(prev_rides)) {
