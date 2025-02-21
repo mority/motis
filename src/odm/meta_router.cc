@@ -651,17 +651,11 @@ api::plan_response meta_router::run() {
     fmt::println("[whitelisting] failed, discarding ODM journeys");
   }
 
-  std::cout << "from_rides after whitelisting:\n";
-  for (auto const& r : p->from_rides_) {
-    std::cout << r << "\n";
-  }
-
   fmt::println("[mixing] {} PT journeys and {} ODM journeys",
                pt_result.journeys_.size(), p->odm_journeys_.size());
   get_odm_mixer().mix(pt_result.journeys_, p->odm_journeys_);
   print_time(mixing_start, "[mixing]");
 
-  std::cout << "itineraries:\n";
   return {.from_ = from_place_,
           .to_ = to_place_,
           .direct_ = std::move(direct_),
@@ -676,7 +670,7 @@ api::plan_response meta_router::run() {
                     j, start_, dest_, cache, *ep::blocked,
                     query_.detailedTransfers_,
                     r_.config_.timetable_->max_matching_distance_,
-                    query_.maxMatchingDistance_);
+                    query_.maxMatchingDistance_, p.get());
               }),
           .previousPageCursor_ =
               fmt::format("EARLIER|{}", to_seconds(pt_result.interval_.from_)),

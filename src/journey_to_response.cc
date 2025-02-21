@@ -57,18 +57,18 @@ void cleanup_intermodal(api::Itinerary& i) {
 
 void fix_odm_times(api::Itinerary& i,
                    odm::prima const* p,
-                   nigiri::timetable const& tt) {
+                   nigiri::timetable const& tt,
+                   tag_lookup const& tags) {
   using namespace motis::odm;
 
-  auto const to_unix_s = [](std::chrono::milliseconds const t) {
-    return std::chrono::time_point<std::chrono::system_clock,
-                                   std::chrono::seconds>{
+  auto const to_sys_seconds = [](std::chrono::milliseconds const t) {
+    return std::chrono::sys_seconds{
         std::chrono::round<std::chrono::seconds>(t)};
   };
 
   auto const get_duration = [](auto const& start_time, auto const& end_time) {
-    return std::chrono::duration_cast<std::chrono::seconds>(start_time -
-                                                            end_time)
+    return std::chrono::duration_cast<std::chrono::seconds>(end_time -
+                                                            start_time)
         .count();
   };
 
@@ -77,8 +77,8 @@ void fix_odm_times(api::Itinerary& i,
     auto& l = i.legs_.front();
     for (auto const& r : p->direct_rides_) {
       if (l.startTime_ == r.unix_dep() && l.endTime_ == r.unix_arr()) {
-        l.startTime_ = to_unix_s(r.dep_);
-        l.endTime_ = to_unix_s(r.arr_);
+        l.startTime_ = to_sys_seconds(r.dep_);
+        l.endTime_ = to_sys_seconds(r.arr_);
         l.duration_ = get_duration(l.startTime_.time_, l.endTime_.time_);
         l.from_.departure_ = l.from_.scheduledDeparture_ =
             l.scheduledStartTime_ = l.startTime_;
@@ -92,26 +92,25 @@ void fix_odm_times(api::Itinerary& i,
     }
   }
 
-  auto const matches = [&](auto const& ride, auto const& leg) {
-    return leg.startTime_ == ride.unix_dep() &&
-           leg.endTime_ == ride.unix_arr() &&
-           geo::latlng{leg.to_.lat_, leg.to_.lon_} ==
-               tt.locations_.coordinates_[ride.stop_];
-  };
-
   auto const adjust_leg_to_ride = [&](auto const& ride, auto& leg) {
     leg.from_.departure_ = leg.from_.scheduledDeparture_ =
-        leg.scheduledStartTime_ = leg.startTime_ = to_unix_s(ride.dep_);
+        leg.scheduledStartTime_ = leg.startTime_ = to_sys_seconds(ride.dep_);
     leg.to_.arrival_ = leg.to_.scheduledArrival_ = leg.scheduledEndTime_ =
-        to_unix_s(ride.arr_);
+        to_sys_seconds(ride.arr_);
     leg.duration_ = get_duration(leg.startTime_.time_, leg.endTime_.time_);
   };
 
   // first mile
   if (!i.legs_.empty() && i.legs_.front().mode_ == api::ModeEnum::ODM) {
     auto l = begin(i.legs_);
+    std::cout << "leg_start_time: " << l->startTime_
+              << ", leg_end_time: " << l->endTime_ << "\n";
     for (auto const& r : p->from_rides_) {
-      if (matches(r, *l)) {
+      std::cout << "ride_unix_s_dep: " << to_sys_seconds(r.dep_)
+                << ", ride_unix_s_arr: " << to_sys_seconds(r.arr_) << "\n";
+      if (l->startTime_ == r.unix_dep() && l->endTime_ == r.unix_arr() &&
+          l->to_.stopId_ && tags.get_location(tt, *l->to_.stopId_) == r.stop_) {
+        std::cout << "MATCHED\n";
         adjust_leg_to_ride(r, *l);
         i.startTime_ = l->startTime_;
         auto nl = std::next(l);
@@ -121,6 +120,8 @@ void fix_odm_times(api::Itinerary& i,
           nl->duration_ =
               get_duration(nl->startTime_.time_, nl->endTime_.time_);
         }
+        std::cout << "leg_start_time: " << l->startTime_
+                  << ", leg_end_time: " << l->endTime_ << "\n";
         break;
       }
     }
@@ -130,7 +131,9 @@ void fix_odm_times(api::Itinerary& i,
   if (i.legs_.size() > 1U && i.legs_.back().mode_ == api::ModeEnum::ODM) {
     auto l = rbegin(i.legs_);
     for (auto const& r : p->to_rides_) {
-      if (matches(r, *l)) {
+      if (l->startTime_ == r.unix_dep() && l->endTime_ == r.unix_arr() &&
+          l->from_.stopId_ &&
+          tags.get_location(tt, *l->from_.stopId_) == r.stop_) {
         adjust_leg_to_ride(r, *l);
         i.endTime_ = l->endTime_;
         auto pl = std::next(l);
@@ -304,10 +307,13 @@ api::Itinerary journey_to_response(osr::ways const* w,
   cleanup_intermodal(itinerary);
 
   if (p) {
-    fix_odm_times(itinerary, p, tt);
+    fix_odm_times(itinerary, p, tt, tags);
   }
 
-  std::cout << itinerary << "\n";
+  //  if (itinerary.legs_.front().mode_ == api::ModeEnum::ODM ||
+  //      itinerary.legs_.back().mode_ == api::ModeEnum::ODM) {
+  //    std::cout << itinerary << "\n";
+  //  }
 
   return itinerary;
 }

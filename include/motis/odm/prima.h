@@ -25,13 +25,6 @@ struct ride {
     return std::tie(a.stop_, a.dep_, a.arr_) <
            std::tie(b.stop_, b.dep_, b.arr_);
   }
-  friend std::ostream& operator<<(std::ostream& out, ride const& r) {
-    out << std::format(
-        "[dep: {} ({}), arr: {} ({}), duration: {}]", r.dep_,
-        std::chrono::sys_time<std::chrono::milliseconds>{r.dep_}, r.arr_,
-        std::chrono::sys_time<std::chrono::milliseconds>{r.arr_}, r.duration());
-    return out;
-  }
 
   nigiri::unixtime_t unix_dep() const { return to_unix(dep_); }
 

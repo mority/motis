@@ -189,8 +189,6 @@ void update_direct_rides(std::vector<ride>& rides, json::array const& update) {
 }
 
 bool prima::whitelist_update(std::string_view json) {
-  std::cout << "received whitelist update:\n" << json << "\n";
-
   try {
     auto const o = json::parse(json).as_object();
     update_pt_rides(from_rides_, prev_from_rides_, o.at("start").as_array());
