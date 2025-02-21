@@ -58,9 +58,10 @@ json::array to_json(std::vector<ride> const& v,
             {"lng", pos.lng_},
             {"times",
              utl::all(from_it, to_it) | utl::transform([&](ride const& s) {
-               return wm == which_mile::kFirstMile
-                          ? s.arr_ - kODMTransferBuffer
-                          : s.dep_ + kODMTransferBuffer;
+               return (wm == which_mile::kFirstMile
+                           ? s.arr_ - kODMTransferBuffer
+                           : s.dep_ + kODMTransferBuffer)
+                   .count();
              }) | utl::emplace_back_to<json::array>()}});
       });
   return a;
@@ -69,7 +70,7 @@ json::array to_json(std::vector<ride> const& v,
 json::array to_json(std::vector<ride> const& v, n::event_type const fixed) {
   return utl::all(v)  //
          | utl::transform([&](ride const& r) {
-             return fixed == n::event_type::kDep ? r.dep_ : r.arr_;
+             return (fixed == n::event_type::kDep ? r.dep_ : r.arr_).count();
            })  //
          | utl::emplace_back_to<json::array>();
 }
@@ -188,6 +189,8 @@ void update_direct_rides(std::vector<ride>& rides, json::array const& update) {
 }
 
 bool prima::whitelist_update(std::string_view json) {
+  std::cout << "received whitelist update:\n" << json << "\n";
+
   try {
     auto const o = json::parse(json).as_object();
     update_pt_rides(from_rides_, prev_from_rides_, o.at("start").as_array());

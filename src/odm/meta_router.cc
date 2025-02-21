@@ -293,7 +293,7 @@ auto get_td_offsets(auto const& rides) {
                                            second_last->valid_from_,
                                            last->valid_from_)) {
               // increase validity interval of last offset
-              last->valid_from_ = r.arr_unix();
+              last->valid_from_ = r.unix_arr();
               continue;
             }
           }
@@ -303,7 +303,7 @@ auto get_td_offsets(auto const& rides) {
                           .duration_ = r.duration(),
                           .transport_mode_id_ = kOdmTransportModeId});
           td_offsets.at(from_it->stop_)
-              .push_back({.valid_from_ = r.arr_unix(),
+              .push_back({.valid_from_ = r.unix_arr(),
                           .duration_ = n::footpath::kMaxDuration,
                           .transport_mode_id_ = kOdmTransportModeId});
         }
@@ -453,10 +453,10 @@ void meta_router::add_direct() const {
   for (auto const& d : p->direct_rides_) {
     p->odm_journeys_.push_back(n::routing::journey{
         .legs_ =
-            {{n::direction::kForward, from_l, to_l, d.unix_dep(), d.arr_unix(),
+            {{n::direction::kForward, from_l, to_l, d.unix_dep(), d.unix_arr(),
               n::routing::offset{to_l, d.duration(), kOdmTransportModeId}}},
         .start_time_ = d.unix_dep(),
-        .dest_time_ = d.arr_unix(),
+        .dest_time_ = d.unix_arr(),
         .dest_ = to_l,
         .transfers_ = 0U});
   }
@@ -650,11 +650,18 @@ api::plan_response meta_router::run() {
     p->odm_journeys_.clear();
     fmt::println("[whitelisting] failed, discarding ODM journeys");
   }
+
+  std::cout << "from_rides after whitelisting:\n";
+  for (auto const& r : p->from_rides_) {
+    std::cout << r << "\n";
+  }
+
   fmt::println("[mixing] {} PT journeys and {} ODM journeys",
                pt_result.journeys_.size(), p->odm_journeys_.size());
   get_odm_mixer().mix(pt_result.journeys_, p->odm_journeys_);
   print_time(mixing_start, "[mixing]");
 
+  std::cout << "itineraries:\n";
   return {.from_ = from_place_,
           .to_ = to_place_,
           .direct_ = std::move(direct_),

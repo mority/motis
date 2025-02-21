@@ -19,6 +19,10 @@
 #include "motis/street_routing.h"
 #include "motis/types.h"
 
+namespace motis::odm {
+struct prima;
+}  // namespace motis::odm
+
 namespace motis {
 
 double get_level(osr::ways const*,
@@ -44,6 +48,7 @@ api::Itinerary journey_to_response(osr::ways const*,
                                    osr::bitvec<osr::node_idx_t>& blocked_mem,
                                    bool detailed_transfers,
                                    double timetable_max_matching_distance,
-                                   double max_matching_distance);
+                                   double max_matching_distance,
+                                   odm::prima const* p = nullptr);
 
 }  // namespace motis

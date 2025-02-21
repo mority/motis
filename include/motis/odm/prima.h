@@ -16,8 +16,8 @@ struct routing;
 
 namespace motis::odm {
 
-nigiri::unixtime_t to_unix(std::chrono::milliseconds const);
-std::chrono::milliseconds to_millis(nigiri::unixtime_t const);
+nigiri::unixtime_t to_unix(std::chrono::milliseconds);
+std::chrono::milliseconds to_millis(nigiri::unixtime_t);
 
 struct ride {
   friend bool operator==(ride const& a, ride const& b) = default;
@@ -25,10 +25,17 @@ struct ride {
     return std::tie(a.stop_, a.dep_, a.arr_) <
            std::tie(b.stop_, b.dep_, b.arr_);
   }
+  friend std::ostream& operator<<(std::ostream& out, ride const& r) {
+    out << std::format(
+        "[dep: {} ({}), arr: {} ({}), duration: {}]", r.dep_,
+        std::chrono::sys_time<std::chrono::milliseconds>{r.dep_}, r.arr_,
+        std::chrono::sys_time<std::chrono::milliseconds>{r.arr_}, r.duration());
+    return out;
+  }
 
   nigiri::unixtime_t unix_dep() const { return to_unix(dep_); }
 
-  nigiri::unixtime_t arr_unix() const { return to_unix(arr_); }
+  nigiri::unixtime_t unix_arr() const { return to_unix(arr_); }
 
   nigiri::duration_t duration() const { return to_unix(arr_) - to_unix(dep_); }
 
