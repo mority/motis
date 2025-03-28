@@ -157,17 +157,11 @@ std::vector<n::routing::offset> routing::get_offsets(
     auto const near_stops_time = std::chrono::steady_clock::now();
     auto near_stops = loc_tree_->in_radius(pos.pos_, max_dist);
 
-    auto const sort_near_stops_time = std::chrono::steady_clock::now();
-    utl::sort(near_stops, [&](auto const& a, auto const& b) {
-      return geo::distance(pos.pos_, tt_->locations_.coordinates_[a]) <
-             geo::distance(pos.pos_, tt_->locations_.coordinates_[b]);
-    });
-    print_time(sort_near_stops_time, "[sort_near_stops]");
-
     auto const repertoire_filter_time = std::chrono::steady_clock::now();
     auto near_stops_filtered = std::vector<n::location_idx_t>{};
     near_stops_filtered.reserve(near_stops.size());
-    repertoire_filter(near_stops, near_stops_filtered, *tt_);
+    repertoire_filter(near_stops, near_stops_filtered, pos.pos_, *tt_, 100U,
+                      2U);
     print_time(repertoire_filter_time,
                fmt::format("[repertoire_filter(in: {}, removed: {} , out: {})]",
                            near_stops.size(),
