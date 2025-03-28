@@ -1,7 +1,7 @@
 [nigiri]
   url=git@github.com:mority/nigiri.git
   branch=repertoire-filter
-  commit=9a8f2e9a31e4662d8b2db2230b4816d2610aac49
+  commit=2b9b9f29cdcd6000b19a18eee33b83e87df39c23
 [cista]
   url=git@github.com:felixguendling/cista.git
   branch=master
