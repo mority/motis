@@ -167,11 +167,12 @@ std::vector<n::routing::offset> routing::get_offsets(
     auto const repertoire_filter_time = std::chrono::steady_clock::now();
     auto near_stops_filtered = std::vector<n::location_idx_t>{};
     near_stops_filtered.reserve(near_stops.size());
-    static auto rf_ = n::repertoire_filter{*tt_};
-    rf_.filter(near_stops, near_stops_filtered);
-    std::println("repertoire_filter removed {} locations",
-                 near_stops.size() - near_stops_filtered.size());
-    print_time(repertoire_filter_time, "[repertoire_filter]");
+    repertoire_filter(near_stops, near_stops_filtered, *tt_);
+    print_time(repertoire_filter_time,
+               fmt::format("[repertoire_filter(in: {}, removed: {} , out: {})]",
+                           near_stops.size(),
+                           near_stops.size() - near_stops_filtered.size(),
+                           near_stops_filtered.size()));
 
     auto const near_stop_locations =
         utl::to_vec(near_stops_filtered, [&](n::location_idx_t const l) {
