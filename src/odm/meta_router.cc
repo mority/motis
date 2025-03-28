@@ -194,20 +194,24 @@ void init_pt(std::vector<n::routing::start>& rides,
     return;
   }
 
+  auto const get_offsets = std::chrono::steady_clock::now();
   auto offsets = r.get_offsets(
       l, dir, {api::ModeEnum::ODM}, std::nullopt, std::nullopt, std::nullopt,
       query.pedestrianProfile_ == api::PedestrianProfileEnum::WHEELCHAIR, max,
       query.maxMatchingDistance_, gbfs_rd);
+  print_time(get_offsets, "[get_offsets]");
 
+  auto const filter_out_of_bounds = std::chrono::steady_clock::now();
   std::erase_if(offsets, [&](n::routing::offset const& o) {
     auto const out_of_bounds =
         (r.odm_bounds_ != nullptr &&
          !r.odm_bounds_->contains(r.tt_->locations_.coordinates_[o.target_]));
     if (out_of_bounds) {
-      fmt::println("Bounds filtered: {}", n::location{*r.tt_, o.target_});
+      // fmt::println("Bounds filtered: {}", n::location{*r.tt_, o.target_});
     }
     return out_of_bounds;
   });
+  print_time(filter_out_of_bounds, "[filter_out_of_bounds]");
 
   for (auto& o : offsets) {
     o.duration_ += kODMTransferBuffer;
@@ -216,12 +220,14 @@ void init_pt(std::vector<n::routing::start>& rides,
   rides.clear();
   rides.reserve(offsets.size() * 2);
 
+  auto const get_starts = std::chrono::steady_clock::now();
   n::routing::get_starts(
       dir == osr::direction::kForward ? n::direction::kForward
                                       : n::direction::kBackward,
       tt, rtt, intvl, offsets, {}, n::routing::kMaxTravelTime,
       location_match_mode, false, rides, true, start_time.prf_idx_,
       start_time.transfer_time_settings_);
+  print_time(get_starts, "[get_starts]");
 }
 
 void meta_router::init_prima(n::interval<n::unixtime_t> const& search_intvl,
@@ -243,6 +249,7 @@ void meta_router::init_prima(n::interval<n::unixtime_t> const& search_intvl,
                                  kODMMaxDuration)
                       : kODMMaxDuration;
 
+  auto const init_from_rides = std::chrono::steady_clock::now();
   if (odm_pre_transit_ && holds_alternative<osr::location>(from_)) {
     init_pt(p->from_rides_, r_, std::get<osr::location>(from_),
             osr::direction::kForward, query_, gbfs_rd_, *tt_, rtt_, odm_intvl,
@@ -251,7 +258,9 @@ void meta_router::init_prima(n::interval<n::unixtime_t> const& search_intvl,
                              : start_time_.start_match_mode_,
             max_offset_duration);
   }
+  print_time(init_from_rides, "[init_from_rides]");
 
+  auto const init_to_rides = std::chrono::steady_clock::now();
   if (odm_post_transit_ && holds_alternative<osr::location>(to_)) {
     init_pt(p->to_rides_, r_, std::get<osr::location>(to_),
             osr::direction::kBackward, query_, gbfs_rd_, *tt_, rtt_, odm_intvl,
@@ -260,6 +269,7 @@ void meta_router::init_prima(n::interval<n::unixtime_t> const& search_intvl,
                              : start_time_.dest_match_mode_,
             max_offset_duration);
   }
+  print_time(init_to_rides, "[init_to_rides]");
 
   std::erase(start_modes_, api::ModeEnum::ODM);
   std::erase(dest_modes_, api::ModeEnum::ODM);

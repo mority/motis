@@ -9,6 +9,7 @@
 #include "osr/location.h"
 #include "osr/types.h"
 
+#include "nigiri/repertoire_filter.h"
 #include "nigiri/routing/clasz_mask.h"
 #include "nigiri/routing/raptor/raptor_state.h"
 #include "nigiri/routing/raptor_search.h"
