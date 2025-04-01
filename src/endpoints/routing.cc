@@ -179,14 +179,13 @@ std::vector<n::routing::offset> routing::get_offsets(
       repertoire_filter(near_stops, near_stops_filtered, *tt_,
                         static_cast<std::uint32_t>(keep_until_index),
                         kStationsPerRoute);
-          print_time(
-              repertoire_filter_time,
-              fmt::format("[repertoire_filter] (in: {}, removed: {} , out:
-              {})",
-                          near_stops.size(),
-                          near_stops.size() - near_stops_filtered.size(),
-                          near_stops_filtered.size()));
-          std::swap(near_stops, near_stops_filtered);
+      print_time(
+          repertoire_filter_time,
+          fmt::format("[repertoire_filter] (in: {}, removed: {} , out: {})",
+                      near_stops.size(),
+                      near_stops.size() - near_stops_filtered.size(),
+                      near_stops_filtered.size()));
+      std::swap(near_stops, near_stops_filtered);
     }
 
     auto const near_stop_locations =
