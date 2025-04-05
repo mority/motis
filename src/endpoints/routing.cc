@@ -158,7 +158,6 @@ std::vector<n::routing::offset> routing::get_offsets(
     auto near_stops = loc_tree_->in_radius(pos.pos_, max_dist);
 
     if (profile == osr::search_profile::kCar) {
-      constexpr auto const kKeepRadius = 1000.0;  // m
       constexpr auto const kStationsPerRoute = 2U;
 
       auto const repertoire_filter_time = std::chrono::steady_clock::now();
@@ -166,19 +165,10 @@ std::vector<n::routing::offset> routing::get_offsets(
         return geo::distance(pos.pos_, tt_->locations_.coordinates_[a]) <
                geo::distance(pos.pos_, tt_->locations_.coordinates_[b]);
       });
-      auto const keep_until_index = std::distance(
-          begin(near_stops),
-          std::upper_bound(begin(near_stops), end(near_stops), kKeepRadius,
-                           [&](auto const v, auto const& e) {
-                             return v < geo::distance(
-                                            pos.pos_,
-                                            tt_->locations_.coordinates_[e]);
-                           }));
       auto near_stops_filtered = std::vector<n::location_idx_t>{};
       near_stops_filtered.reserve(near_stops.size());
-      repertoire_filter(near_stops, near_stops_filtered, *tt_,
-                        static_cast<std::uint32_t>(keep_until_index),
-                        kStationsPerRoute);
+      repertoire_filter<n::location_idx_t>(near_stops, near_stops_filtered,
+                                           *tt_, kStationsPerRoute);
       print_time(
           repertoire_filter_time,
           fmt::format("[repertoire_filter] (in: {}, removed: {} , out: {})",

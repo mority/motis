@@ -6,12 +6,15 @@
 #include "utl/concat.h"
 #include "utl/erase_if.h"
 #include "utl/parallel_for.h"
+#include "utl/sort_by.h"
 #include "utl/sorted_diff.h"
 
 #include "osr/routing/profiles/foot.h"
 #include "osr/routing/route.h"
 #include "osr/util/infinite.h"
 #include "osr/util/reverse.h"
+
+#include "nigiri/repertoire_filter.h"
 
 #include "motis/constants.h"
 #include "motis/get_loc.h"
@@ -118,6 +121,8 @@ elevator_footpath_map_t compute_footpaths(
     std::vector<osr::match_t> neighbor_candidates_;
   };
 
+  auto n_footpaths_filtered = 0UL;
+
   for (auto const mode :
        {osr::search_profile::kFoot, osr::search_profile::kWheelchair}) {
     auto const& candidates = mode == osr::search_profile::kFoot
@@ -137,7 +142,7 @@ elevator_footpath_map_t compute_footpaths(
                                   s.neighbors_.emplace_back(x);
                                 }
                               });
-          auto const results = osr::route(
+          auto results = osr::route(
               w, mode, get_loc(tt, w, pl, matches, l),
               utl::transform_to(
                   s.neighbors_, s.neighbors_loc_,
@@ -147,6 +152,7 @@ elevator_footpath_map_t compute_footpaths(
                                 [&](auto&& x) { return candidates[x]; }),
               kMaxDuration, osr::direction::kForward, nullptr, nullptr,
               elevations, [](osr::path const& p) { return p.uses_elevator_; });
+
           for (auto const [n, r] : utl::zip(s.neighbors_, results)) {
             if (r.has_value()) {
               auto const duration = n::duration_t{r->cost_ / 60U};
@@ -192,10 +198,21 @@ elevator_footpath_map_t compute_footpaths(
           });
           utl::sort(footpaths);
 
+          auto filtered_footpaths = std::vector<n::footpath>{};
+          n::repertoire_filter<n::footpath>(
+              footpaths, filtered_footpaths, tt, 2U,
+              [](auto const& fp) { return fp.target(); });
+          n_footpaths_filtered +=
+              footpaths.size() -
+              filtered_footpaths.size();  // this not thread-safe :)
+          std::swap(footpaths, filtered_footpaths);
+
           pt->update_monotonic(
               (mode == osr::search_profile::kFoot ? 0U : tt.n_locations()) + i);
         });
   }
+
+  fmt::println("repertoire filter removed {} footpaths", n_footpaths_filtered);
 
   fmt::println(std::clog, "  -> create ingoing footpaths");
   auto footpaths_in_foot =
