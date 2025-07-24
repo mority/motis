@@ -514,6 +514,12 @@ void meta_router::add_direct() const {
 }
 
 api::plan_response meta_router::run() {
+  auto const to_ms = [](auto const t) -> std::uint64_t {
+    return static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(t).count());
+  };
+  auto section_times = std::map<std::string, std::uint64_t>{};
+
   // init
   auto const init_start = std::chrono::steady_clock::now();
   utl::verify(r_.tt_ != nullptr && r_.tags_ != nullptr,
@@ -551,6 +557,8 @@ api::plan_response meta_router::run() {
                 search_intvl.to_};
 
   init_prima(context_intvl, odm_intvl);
+  section_times.emplace("init_time",
+                        to_ms(std::chrono::steady_clock::now() - init_start));
   print_time(init_start,
              fmt::format("[init] (first_mile: {}, last_mile: {}, direct: {})",
                          p->from_rides_.size(), p->to_rides_.size(),
@@ -581,6 +589,8 @@ api::plan_response meta_router::run() {
   }
   auto const blacklisted =
       blacklist_response && p->blacklist_update(*blacklist_response);
+  section_times.emplace("blacklist_time",
+                        to_ms(std::chrono::steady_clock::now() - bl_start));
   n::log(n::log_lvl::debug, "motis.odm",
          "[blacklisting] ODM events after blacklisting: {}", p->n_events());
   print_time(
@@ -660,6 +670,8 @@ api::plan_response meta_router::run() {
                odm_time(a.legs_.front()) == odm_time(b.legs_.front()) &&
                odm_time(a.legs_.back()) == odm_time(b.legs_.back());
       });
+  section_times.emplace("routing_time", to_ms(std::chrono::steady_clock::now() -
+                                              prep_queries_start));
   n::log(n::log_lvl::debug, "motis.odm", "[routing] interval searched: {}",
          pt_result.interval_);
   print_time(routing_start, "[routing]",
@@ -691,8 +703,6 @@ api::plan_response meta_router::run() {
     }
   }
 
-  // mixing
-  auto const mixing_start = std::chrono::steady_clock::now();
   auto const whitelisted =
       whitelist_response && p->whitelist_update(*whitelist_response);
   if (whitelisted) {
@@ -703,6 +713,8 @@ api::plan_response meta_router::run() {
     n::log(n::log_lvl::debug, "motis.odm",
            "[whitelisting] failed, discarding ODM journeys");
   }
+  section_times.emplace("whitelist_time",
+                        to_ms(std::chrono::steady_clock::now() - wl_start));
   print_time(
       wl_start,
       fmt::format("[whitelisting] (first_mile: {}, last_mile: {}, direct: {})",
@@ -711,10 +723,12 @@ api::plan_response meta_router::run() {
       r_.metrics_->routing_execution_duration_seconds_whitelisting_);
   r_.metrics_->routing_odm_journeys_found_whitelist_.Observe(
       static_cast<double>(p->odm_journeys_.size()));
+
+  // mixing
+  auto const mixing_start = std::chrono::steady_clock::now();
   n::log(n::log_lvl::debug, "motis.odm",
          "[mixing] {} PT journeys and {} ODM journeys",
          pt_result.journeys_.size(), p->odm_journeys_.size());
-
   if (kPrintMixerIO) {
     n::log(n::log_lvl::debug, "motis.odm", "[mixing] Input Journeys:\n{}",
            to_csv(get_mixer_input(pt_result.journeys_, p->odm_journeys_)));
@@ -736,6 +750,8 @@ api::plan_response meta_router::run() {
   std::erase_if(p->odm_journeys_, [&](auto const& j) {
     return !search_intvl.contains(j.start_time_);
   });
+  section_times.emplace("mixing_time",
+                        to_ms(std::chrono::steady_clock::now() - mixing_start));
 
   r_.metrics_->routing_journeys_found_.Increment(
       static_cast<double>(p->odm_journeys_.size()));
@@ -771,7 +787,8 @@ api::plan_response meta_router::run() {
           .previousPageCursor_ =
               fmt::format("EARLIER|{}", to_seconds(pt_result.interval_.from_)),
           .nextPageCursor_ =
-              fmt::format("LATER|{}", to_seconds(pt_result.interval_.to_))};
+              fmt::format("LATER|{}", to_seconds(pt_result.interval_.to_)),
+          .debugOutput_ = };
 }
 
 }  // namespace motis::odm
