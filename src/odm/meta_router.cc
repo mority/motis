@@ -518,13 +518,12 @@ api::plan_response meta_router::run() {
     return static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(t).count());
   };
-  auto section_times = std::map<std::string, std::uint64_t>{};
+  auto stats = motis::ep::stats_map_t{};
 
   // init
   auto const init_start = std::chrono::steady_clock::now();
   utl::verify(r_.tt_ != nullptr && r_.tags_ != nullptr,
               "mode=TRANSIT requires timetable to be loaded");
-  auto stats = motis::ep::stats_map_t{};
   auto const start_intvl = std::visit(
       utl::overloaded{[](n::interval<n::unixtime_t> const i) { return i; },
                       [](n::unixtime_t const t) {
@@ -557,8 +556,11 @@ api::plan_response meta_router::run() {
                 search_intvl.to_};
 
   init_prima(context_intvl, odm_intvl);
-  section_times.emplace("init_time",
-                        to_ms(std::chrono::steady_clock::now() - init_start));
+  stats.emplace("init_time",
+                to_ms(std::chrono::steady_clock::now() - init_start));
+  stats.emplace("init_first_mile_odm_rides", p->from_rides_.size());
+  stats.emplace("init_last_mile_odm_rides", p->to_rides_.size());
+  stats.emplace("init_direct_odm_rides", p->direct_rides_.size());
   print_time(init_start,
              fmt::format("[init] (first_mile: {}, last_mile: {}, direct: {})",
                          p->from_rides_.size(), p->to_rides_.size(),
@@ -589,8 +591,11 @@ api::plan_response meta_router::run() {
   }
   auto const blacklisted =
       blacklist_response && p->blacklist_update(*blacklist_response);
-  section_times.emplace("blacklist_time",
-                        to_ms(std::chrono::steady_clock::now() - bl_start));
+  stats.emplace("blacklist_time",
+                to_ms(std::chrono::steady_clock::now() - bl_start));
+  stats.emplace("blacklist_first_mile_odm_rides", p->from_rides_.size());
+  stats.emplace("blacklist_last_mile_odm_rides", p->to_rides_.size());
+  stats.emplace("blacklist_direct_odm_rides", p->direct_rides_.size());
   n::log(n::log_lvl::debug, "motis.odm",
          "[blacklisting] ODM events after blacklisting: {}", p->n_events());
   print_time(
@@ -670,8 +675,23 @@ api::plan_response meta_router::run() {
                odm_time(a.legs_.front()) == odm_time(b.legs_.front()) &&
                odm_time(a.legs_.back()) == odm_time(b.legs_.back());
       });
-  section_times.emplace("routing_time", to_ms(std::chrono::steady_clock::now() -
-                                              prep_queries_start));
+  stats.emplace("routing_time",
+                to_ms(std::chrono::steady_clock::now() - prep_queries_start));
+  stats.emplace("subquery_time_pt",
+                pt_result.search_stats_.execute_time_.count());
+  stats.emplace("subquery_time_odm_dest_short",
+                results[1].search_stats_.execute_time_.count());
+  stats.emplace("subquery_time_odm_dest_long",
+                results[2].search_stats_.execute_time_.count());
+  stats.emplace("subquery_time_odm_start_short",
+                results[3].search_stats_.execute_time_.count());
+  stats.emplace("subquery_time_odm_start_long",
+                results[4].search_stats_.execute_time_.count());
+  stats.emplace("routing_n_mixed_odm_journeys", p->odm_journeys_.size());
+  stats.emplace("routing_first_mile_odm_rides", p->from_rides_.size());
+  stats.emplace("routing_last_mile_odm_rides", p->to_rides_.size());
+  stats.emplace("routing_direct_odm_rides", p->direct_rides_.size());
+
   n::log(n::log_lvl::debug, "motis.odm", "[routing] interval searched: {}",
          pt_result.interval_);
   print_time(routing_start, "[routing]",
@@ -705,16 +725,20 @@ api::plan_response meta_router::run() {
 
   auto const whitelisted =
       whitelist_response && p->whitelist_update(*whitelist_response);
+  stats.emplace("whitelist_first_mile_odm_rides", p->from_rides_.size());
+  stats.emplace("whitelist_last_mile_odm_rides", p->to_rides_.size());
+  stats.emplace("whitelist_direct_odm_rides", p->direct_rides_.size());
   if (whitelisted) {
     p->adjust_to_whitelisting();
+    stats.emplace("whitelist_n_mixed_odm_journeys", p->odm_journeys_.size());
     add_direct();
   } else {
     p->odm_journeys_.clear();
     n::log(n::log_lvl::debug, "motis.odm",
            "[whitelisting] failed, discarding ODM journeys");
   }
-  section_times.emplace("whitelist_time",
-                        to_ms(std::chrono::steady_clock::now() - wl_start));
+  stats.emplace("whitelist_time",
+                to_ms(std::chrono::steady_clock::now() - wl_start));
   print_time(
       wl_start,
       fmt::format("[whitelisting] (first_mile: {}, last_mile: {}, direct: {})",
@@ -733,7 +757,7 @@ api::plan_response meta_router::run() {
     n::log(n::log_lvl::debug, "motis.odm", "[mixing] Input Journeys:\n{}",
            to_csv(get_mixer_input(pt_result.journeys_, p->odm_journeys_)));
   }
-  kMixer.mix(pt_result.journeys_, p->odm_journeys_, r_.metrics_);
+  kMixer.mix(pt_result.journeys_, p->odm_journeys_, r_.metrics_, &stats);
   if (kPrintMixerIO) {
     n::log(n::log_lvl::debug, "motis.odm", "[mixing] Output Journeys:\n{}",
            to_csv(p->odm_journeys_));
@@ -750,8 +774,8 @@ api::plan_response meta_router::run() {
   std::erase_if(p->odm_journeys_, [&](auto const& j) {
     return !search_intvl.contains(j.start_time_);
   });
-  section_times.emplace("mixing_time",
-                        to_ms(std::chrono::steady_clock::now() - mixing_start));
+  stats.emplace("mixing_time",
+                to_ms(std::chrono::steady_clock::now() - mixing_start));
 
   r_.metrics_->routing_journeys_found_.Increment(
       static_cast<double>(p->odm_journeys_.size()));
@@ -760,8 +784,11 @@ api::plan_response meta_router::run() {
                               std::chrono::steady_clock::now() - init_start)
                               .count()) /
       1000.0);
+  stats.emplace("total_time",
+                to_ms(std::chrono::steady_clock::now() - init_start));
 
-  return {.from_ = from_place_,
+  return {.debugOutput_ = std::move(stats),
+          .from_ = from_place_,
           .to_ = to_place_,
           .direct_ = std::move(direct_),
           .itineraries_ = utl::to_vec(
@@ -787,8 +814,7 @@ api::plan_response meta_router::run() {
           .previousPageCursor_ =
               fmt::format("EARLIER|{}", to_seconds(pt_result.interval_.from_)),
           .nextPageCursor_ =
-              fmt::format("LATER|{}", to_seconds(pt_result.interval_.to_)),
-          .debugOutput_ = };
+              fmt::format("LATER|{}", to_seconds(pt_result.interval_.to_))};
 }
 
 }  // namespace motis::odm

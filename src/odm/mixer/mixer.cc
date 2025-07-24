@@ -209,7 +209,9 @@ void add_pt_sort(n::pareto_set<nr::journey> const& pt_journeys,
 
 void mixer::mix(n::pareto_set<nr::journey> const& pt_journeys,
                 std::vector<nr::journey>& odm_journeys,
-                metrics_registry* metrics) const {
+                metrics_registry* metrics,
+                motis::ep::stats_map_t* stats) const {
+  auto const initial_n = odm_journeys.size();
   pareto_dominance(odm_journeys);
   auto const pareto_n = odm_journeys.size();
   cost_dominance(pt_journeys, odm_journeys);
@@ -223,6 +225,13 @@ void mixer::mix(n::pareto_set<nr::journey> const& pt_journeys,
         static_cast<double>(cost_n));
     metrics->routing_odm_journeys_found_non_dominated_prod_.Observe(
         static_cast<double>(odm_journeys.size()));
+  }
+
+  if (stats != nullptr) {
+    stats->emplace("mixer_n_odm_journeys_initial", initial_n);
+    stats->emplace("mixer_n_odm_journeys_pareto", pareto_n);
+    stats->emplace("mixer_n_odm_journeys_cost", cost_n);
+    stats->emplace("mixer_n_odm_journeys_prod", odm_journeys.size());
   }
 
   add_pt_sort(pt_journeys, odm_journeys);
