@@ -1,7 +1,7 @@
 [nigiri]
   url=git@github.com:motis-project/nigiri.git
   branch=master
-  commit=d229e104a211590514712f22549bbb8a7e1f9438
+  commit=b7af379b90b34b0c0e5c5e6dbbcd00dedf1adeb0
 [cista]
   url=git@github.com:felixguendling/cista.git
   branch=master
@@ -53,7 +53,7 @@
 [mimalloc]
   url=git@github.com:motis-project/mimalloc.git
   branch=dev
-  commit=e2f4fe647e8aff4603a7d5119b8639fd1a47c8a6
+  commit=189b0ac416b94848bc0a7702f7e97fe6ebd91829
 [lz4]
   url=git@github.com:motis-project/lz4.git
   branch=dev
