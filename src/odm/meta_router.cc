@@ -688,9 +688,6 @@ api::plan_response meta_router::run() {
   stats.emplace("subquery_time_odm_start_long",
                 results[4].search_stats_.execute_time_.count());
   stats.emplace("routing_n_mixed_odm_journeys", p->odm_journeys_.size());
-  stats.emplace("routing_first_mile_odm_rides", p->from_rides_.size());
-  stats.emplace("routing_last_mile_odm_rides", p->to_rides_.size());
-  stats.emplace("routing_direct_odm_rides", p->direct_rides_.size());
 
   n::log(n::log_lvl::debug, "motis.odm", "[routing] interval searched: {}",
          pt_result.interval_);
@@ -703,6 +700,9 @@ api::plan_response meta_router::run() {
   auto ioc2 = boost::asio::io_context{};
   if (blacklisted) {
     extract_rides();
+    stats.emplace("routing_first_mile_odm_rides", p->from_rides_.size());
+    stats.emplace("routing_last_mile_odm_rides", p->to_rides_.size());
+    stats.emplace("routing_direct_odm_rides", p->direct_rides_.size());
     try {
       n::log(n::log_lvl::debug, "motis.odm",
              "[whitelisting] request for {} events", p->n_events());
@@ -787,7 +787,8 @@ api::plan_response meta_router::run() {
   stats.emplace("total_time",
                 to_ms(std::chrono::steady_clock::now() - init_start));
 
-  return {.debugOutput_ = std::move(stats),
+  return {
+      .debugOutput_ = std::move(stats),
       .from_ = from_place_,
       .to_ = to_place_,
       .direct_ = std::move(direct_),
