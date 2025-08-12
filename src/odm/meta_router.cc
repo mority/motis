@@ -535,9 +535,9 @@ api::plan_response meta_router::run() {
   init_prima(context_intvl, odm_intvl);
   stats.emplace("init_time",
                 to_ms(std::chrono::steady_clock::now() - init_start));
-  stats.emplace("init_first_mile_odm_rides", p->from_rides_.size());
-  stats.emplace("init_last_mile_odm_rides", p->to_rides_.size());
-  stats.emplace("init_direct_odm_rides", p->direct_rides_.size());
+  stats.emplace("init_first_mile_odm_rides", p_->from_rides_.size());
+  stats.emplace("init_last_mile_odm_rides", p_->to_rides_.size());
+  stats.emplace("init_direct_odm_rides", p_->direct_rides_.size());
   print_time(init_start,
              fmt::format("[init] (first_mile: {}, last_mile: {}, direct: {})",
                          p_->from_rides_.size(), p_->to_rides_.size(),
@@ -570,9 +570,9 @@ api::plan_response meta_router::run() {
       blacklist_response && p_->blacklist_update(*blacklist_response);
   stats.emplace("blacklist_time",
                 to_ms(std::chrono::steady_clock::now() - bl_start));
-  stats.emplace("blacklist_first_mile_odm_rides", p->from_rides_.size());
-  stats.emplace("blacklist_last_mile_odm_rides", p->to_rides_.size());
-  stats.emplace("blacklist_direct_odm_rides", p->direct_rides_.size());
+  stats.emplace("blacklist_first_mile_odm_rides", p_->from_rides_.size());
+  stats.emplace("blacklist_last_mile_odm_rides", p_->to_rides_.size());
+  stats.emplace("blacklist_direct_odm_rides", p_->direct_rides_.size());
   n::log(n::log_lvl::debug, "motis.odm",
          "[blacklisting] ODM events after blacklisting: {}", p_->n_events());
   print_time(
@@ -666,7 +666,7 @@ api::plan_response meta_router::run() {
                 results[3].search_stats_.execute_time_.count());
   stats.emplace("subquery_time_odm_start_long",
                 results[4].search_stats_.execute_time_.count());
-  stats.emplace("routing_n_mixed_odm_journeys", p->odm_journeys_.size());
+  stats.emplace("routing_n_mixed_odm_journeys", p_->odm_journeys_.size());
 
   n::log(n::log_lvl::debug, "motis.odm", "[routing] interval searched: {}",
          pt_result.interval_);
@@ -679,9 +679,9 @@ api::plan_response meta_router::run() {
   auto ioc2 = boost::asio::io_context{};
   if (blacklisted) {
     extract_rides(p_.get());
-    stats.emplace("routing_first_mile_odm_rides", p->from_rides_.size());
-    stats.emplace("routing_last_mile_odm_rides", p->to_rides_.size());
-    stats.emplace("routing_direct_odm_rides", p->direct_rides_.size());
+    stats.emplace("routing_first_mile_odm_rides", p_->from_rides_.size());
+    stats.emplace("routing_last_mile_odm_rides", p_->to_rides_.size());
+    stats.emplace("routing_direct_odm_rides", p_->direct_rides_.size());
     try {
       n::log(n::log_lvl::debug, "motis.odm",
              "[whitelisting] request for {} events", p_->n_events());
@@ -704,9 +704,9 @@ api::plan_response meta_router::run() {
 
   auto const whitelisted =
       whitelist_response && p_->whitelist_update(*whitelist_response);
-  stats.emplace("whitelist_first_mile_odm_rides", p->from_rides_.size());
-  stats.emplace("whitelist_last_mile_odm_rides", p->to_rides_.size());
-  stats.emplace("whitelist_direct_odm_rides", p->direct_rides_.size());
+  stats.emplace("whitelist_first_mile_odm_rides", p_->from_rides_.size());
+  stats.emplace("whitelist_last_mile_odm_rides", p_->to_rides_.size());
+  stats.emplace("whitelist_direct_odm_rides", p_->direct_rides_.size());
   if (whitelisted) {
     p_->adjust_to_whitelisting();
     stats.emplace("whitelist_n_mixed_odm_journeys", p_->odm_journeys_.size());
