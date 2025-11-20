@@ -17,8 +17,7 @@ namespace motis::odm {
 
 std::string prima::make_ride_sharing_request(n::timetable const& tt) const {
   return make_whitelist_request(from_, to_, first_mile_ride_sharing_,
-                                last_mile_ride_sharing_, direct_ride_sharing_,
-                                fixed_, cap_, tt);
+                                last_mile_ride_sharing_, fixed_, cap_, tt);
 }
 
 bool prima::consume_ride_sharing_response(std::string_view json) {
@@ -92,41 +91,11 @@ bool prima::consume_ride_sharing_response(std::string_view json) {
     return false;
   };
 
-  auto const update_direct = [&](json::array const& update) {
-    if (direct_ride_sharing_.size() != update.size()) {
-      n::log(n::log_lvl::debug, "motis.prima",
-             "[whitelist ride-sharing] direct ride-sharing #rides != "
-             "#updates "
-             "({} != {})",
-             direct_ride_sharing_.size(), update.size());
-      direct_ride_sharing_.clear();
-      return true;
-    }
-
-    direct_ride_sharing_.clear();
-    for (auto const& time : update) {
-      if (time.is_array()) {
-        for (auto const& ride : time.as_array()) {
-          if (!ride.is_null()) {
-            direct_ride_sharing_.push_back(
-                {to_unix(ride.as_object().at("pickupTime").as_int64()),
-                 to_unix(ride.as_object().at("dropoffTime").as_int64())});
-            direct_ride_sharing_tour_ids_.emplace_back(
-                ride.as_object().at("tripId").as_string());
-          }
-        }
-      }
-    }
-
-    return false;
-  };
-
   auto with_errors = false;
   try {
     auto const o = json::parse(json).as_object();
     with_errors |= update_first_mile(o.at("start").as_array());
     with_errors |= update_last_mile(o.at("target").as_array());
-    with_errors |= update_direct(o.at("direct").as_array());
   } catch (std::exception const&) {
     n::log(n::log_lvl::debug, "motis.prima",
            "[whitelist ride-sharing] could not parse response: {}", json);

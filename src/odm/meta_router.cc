@@ -35,7 +35,6 @@
 #include "motis/journey_to_response.h"
 #include "motis/metrics_registry.h"
 #include "motis/odm/bounds.h"
-#include "motis/odm/journeys.h"
 #include "motis/odm/odm.h"
 #include "motis/odm/prima.h"
 #include "motis/odm/shorten.h"
@@ -281,9 +280,9 @@ api::plan_response meta_router::run() {
   auto p = prima{r_.config_.prima_->url_, to_osr_loc(from_), to_osr_loc(to_),
                  query_};
   p.init(search_intvl, taxi_intvl, odm_pre_transit_, odm_post_transit_,
-         odm_direct_, ride_sharing_pre_transit_, ride_sharing_post_transit_,
-         ride_sharing_direct_, *tt_, rtt_, r_, e_, gbfs_rd_, from_place_,
-         to_place_, query_, start_time_, api_version_);
+         ride_sharing_pre_transit_, ride_sharing_post_transit_, *tt_, rtt_, r_,
+         e_, gbfs_rd_, from_place_, to_place_, query_, start_time_,
+         api_version_);
 
   std::erase(start_modes_, api::ModeEnum::ODM);
   std::erase(start_modes_, api::ModeEnum::RIDE_SHARING);
@@ -292,34 +291,27 @@ api::plan_response meta_router::run() {
 
   print_time(
       init_start,
-      fmt::format("[init] (#first_mile_offsets: {}, #last_mile_offsets: {}, "
-                  "#direct_rides: {})",
-                  p.first_mile_taxi_.size(), p.last_mile_taxi_.size(),
-                  p.direct_taxi_.size()),
+      fmt::format("[init] #first_mile_offsets: {}, #last_mile_offsets: {},",
+                  p.first_mile_taxi_.size(), p.last_mile_taxi_.size()),
       r_.metrics_->routing_execution_duration_seconds_init_);
 
   auto const blacklist_start = std::chrono::steady_clock::now();
   auto const blacklisted_taxis = p.blacklist_taxi(*tt_, taxi_intvl);
-  print_time(blacklist_start,
-             fmt::format("[blacklist taxi] (#first_mile_offsets: {}, "
-                         "#last_mile_offsets: {}, #direct_rides: {})",
-                         p.first_mile_taxi_.size(), p.last_mile_taxi_.size(),
-                         p.direct_taxi_.size()),
-             r_.metrics_->routing_execution_duration_seconds_blacklisting_);
+  print_time(
+      blacklist_start,
+      fmt::format(
+          "[blacklist taxi] #first_mile_offsets: {}, #last_mile_offsets: {},",
+          p.first_mile_taxi_.size(), p.last_mile_taxi_.size()),
+      r_.metrics_->routing_execution_duration_seconds_blacklisting_);
 
   auto const whitelist_ride_sharing_start = std::chrono::steady_clock::now();
   auto const whitelisted_ride_sharing = p.whitelist_ride_sharing(*tt_);
-  n::log(n::log_lvl::debug, "motis.prima",
-         "[whitelist ride-sharing] ride-sharing events after whitelisting: {}",
-         p.n_ride_sharing_events());
-  print_time(
-      whitelist_ride_sharing_start,
-      fmt::format("[whitelist ride-sharing] (#first_mile_ride_sharing: {}, "
-                  "#last_mile_ride_sharing: {}, #direct_ride_sharing: {})",
-                  p.first_mile_ride_sharing_.size(),
-                  p.last_mile_ride_sharing_.size(),
-                  p.direct_ride_sharing_.size()),
-      r_.metrics_->routing_execution_duration_seconds_blacklisting_);
+  print_time(whitelist_ride_sharing_start,
+             fmt::format("[whitelist ride-sharing] #first_mile_ride_sharing: "
+                         "{}, #last_mile_ride_sharing: {},",
+                         p.first_mile_ride_sharing_.size(),
+                         p.last_mile_ride_sharing_.size()),
+             r_.metrics_->routing_execution_duration_seconds_blacklisting_);
 
   auto const prep_queries_start = std::chrono::steady_clock::now();
   auto const [first_mile_taxi_short, first_mile_taxi_long] =
@@ -388,21 +380,21 @@ api::plan_response meta_router::run() {
                                                  kRideSharingTransportModeId)
                                 : get_td_offsets(p.last_mile_ride_sharing_,
                                                  kRideSharingTransportModeId)};
-  print_time(prep_queries_start, "[prepare queries]",
-             r_.metrics_->routing_execution_duration_seconds_preparing_);
+  auto const sub_queries =
+      qf.make_queries(blacklisted_taxis, whitelisted_ride_sharing);
+  print_time(
+      prep_queries_start,
+      fmt::format("[prepare queries] prepared {} queries,", sub_queries.size()),
+      r_.metrics_->routing_execution_duration_seconds_preparing_);
 
   auto const routing_start = std::chrono::steady_clock::now();
-  auto sub_queries =
-      qf.make_queries(blacklisted_taxis, whitelisted_ride_sharing);
-  n::log(n::log_lvl::debug, "motis.prima",
-         "[prepare queries] {} queries prepared", sub_queries.size());
   auto const results = search_interval(sub_queries);
   utl::verify(!results.empty(), "prima: public transport result expected");
   auto const& pt_result = results.front();
-  n::log(n::log_lvl::debug, "motis.prima", "[routing] interval searched: {}",
-         pt_result.interval_);
-  print_time(routing_start, "[routing]",
-             r_.metrics_->routing_execution_duration_seconds_routing_);
+  print_time(
+      routing_start,
+      fmt::format("[routing] interval searched: {},", pt_result.interval_),
+      r_.metrics_->routing_execution_duration_seconds_routing_);
 
   auto journeys = std::vector<nr::journey>{};
   add_odm_journeys(journeys, results, kOdmTransportModeId);
@@ -417,10 +409,6 @@ api::plan_response meta_router::run() {
       });
   add_odm_journeys(journeys, results, kRideSharingTransportModeId);
   std::for_each(begin(journeys), end(journeys), fix_odm_durations);
-  if (whitelisted_ride_sharing) {
-    add_direct_odm(p.direct_ride_sharing_, journeys, from_, to_,
-                   query_.arriveBy_, kRideSharingTransportModeId);
-  }
   journeys.insert(end(journeys), begin(pt_result.journeys_),
                   end(pt_result.journeys_));
   utl::sort(journeys, [](auto const& a, auto const& b) {
@@ -465,19 +453,6 @@ api::plan_response meta_router::run() {
                 query_.ignorePreTransitRentalReturnConstraints_,
                 query_.ignorePostTransitRentalReturnConstraints_,
                 query_.language_);
-
-            if (response.legs_.front().mode_ == api::ModeEnum::RIDE_SHARING &&
-                response.legs_.size() == 1) {
-              for (auto const [i, a] : utl::enumerate(p.direct_ride_sharing_)) {
-                if (a.dep_ == response.legs_.front().startTime_ &&
-                    a.arr_ == response.legs_.front().endTime_) {
-                  response.legs_.front().tripId_ = std::optional{
-                      p.direct_ride_sharing_tour_ids_.at(i).view()};
-                  break;
-                }
-              }
-              return response;
-            }
             if (response.legs_.front().mode_ == api::ModeEnum::RIDE_SHARING) {
               for (auto const [i, a] :
                    utl::enumerate(p.first_mile_ride_sharing_)) {

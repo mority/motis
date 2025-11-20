@@ -40,48 +40,8 @@ constexpr auto blacklist_response = R"(
 {
   "start": [[{"startTime": 32400000, "endTime": 43200000}],[{"startTime": 43200000, "endTime": 64800000}]],
   "target": [[{"startTime": 43200000, "endTime": 64800000}],[]],
-  "direct": [{"startTime": 43200000, "endTime": 64800000}]
+  "direct": []
 }
-)";
-
-// 1970-01-01T09:57:00Z, 1970-01-01T10:55:00Z
-// 1970-01-01T14:07:00Z, 1970-01-01T14:46:00Z
-// 1970-01-01T11:30:00Z, 1970-01-01T12:30:00Z
-constexpr auto whitelisting_response = R"(
-{
-  "start": [[{"pickupTime": 35820000, "dropoffTime": 39300000}],[null]],
-  "target": [[{"pickupTime": 50820000, "dropoffTime": 53160000}]],
-  "direct": [{"pickupTime": 41400000,"dropoffTime": 45000000}]
-}
-)";
-
-constexpr auto adjusted_to_whitelisting = R"(
-[1970-01-01 09:57, 1970-01-01 12:00]
-TRANSFERS: 0
-     FROM: (START, START) [1970-01-01 09:57]
-       TO: (END, END) [1970-01-01 12:00]
-leg 0: (START, START) [1970-01-01 09:57] -> (A, A) [1970-01-01 10:55]
-  MUMO (id=10, duration=58)
-leg 1: (A, A) [1970-01-01 10:55] -> (A, A) [1970-01-01 11:00]
-  FOOTPATH (duration=5)
-leg 2: (A, A) [1970-01-01 11:00] -> (END, END) [1970-01-01 12:00]
-  MUMO (id=0, duration=60)
-
-[1970-01-01 09:57, 1970-01-01 14:46]
-TRANSFERS: 0
-     FROM: (START, START) [1970-01-01 09:57]
-       TO: (END, END) [1970-01-01 14:46]
-leg 0: (START, START) [1970-01-01 09:57] -> (A, A) [1970-01-01 10:55]
-  MUMO (id=10, duration=58)
-leg 1: (A, A) [1970-01-01 10:55] -> (A, A) [1970-01-01 11:00]
-  FOOTPATH (duration=5)
-leg 2: (A, A) [1970-01-01 11:00] -> (C, C) [1970-01-01 13:00]
-  MUMO (id=1000000, duration=120)
-leg 3: (C, C) [1970-01-01 13:00] -> (C, C) [1970-01-01 14:07]
-  FOOTPATH (duration=67)
-leg 4: (C, C) [1970-01-01 14:07] -> (END, END) [1970-01-01 14:46]
-  MUMO (id=10, duration=39)
-
 )";
 
 TEST(odm, prima_update) {
@@ -132,77 +92,4 @@ TEST(odm, prima_update) {
   EXPECT_EQ(p.last_mile_taxi_times_[0][0].to_, to_unix(64800000));
   EXPECT_EQ(p.last_mile_taxi_[1].target_, get_loc_idx("D"));
   EXPECT_EQ(p.last_mile_taxi_times_[1].size(), 0);
-
-  auto const expected_direct_interval =
-      n::interval{to_unix(43200000), to_unix(64800000)};
-  for (auto const& d : p.direct_taxi_) {
-    EXPECT_TRUE(expected_direct_interval.contains(d.dep_));
-  }
-
-  auto taxi_journeys = std::vector<nr::journey>{};
-  taxi_journeys.push_back(
-      {.legs_ = {{n::direction::kForward,
-                  n::get_special_station(n::special_station::kStart),
-                  get_loc_idx("A"), n::unixtime_t{10h}, n::unixtime_t{11h},
-                  nr::offset{get_loc_idx("A"), 1h, motis::kOdmTransportModeId}},
-                 {n::direction::kForward, get_loc_idx("A"),
-                  n::get_special_station(n::special_station::kEnd),
-                  n::unixtime_t{11h}, n::unixtime_t{12h},
-                  nr::offset{get_loc_idx("A"), 1h, kWalkTransportModeId}}},
-       .start_time_ = n::unixtime_t{10h},
-       .dest_time_ = n::unixtime_t{12h},
-       .dest_ = n::get_special_station(n::special_station::kEnd)});
-
-  taxi_journeys.push_back(
-      {.legs_ = {{n::direction::kForward,
-                  n::get_special_station(n::special_station::kStart),
-                  get_loc_idx("B"), n::unixtime_t{11h}, n::unixtime_t{12h},
-                  nr::offset{get_loc_idx("B"), 1h, motis::kOdmTransportModeId}},
-                 {n::direction::kForward, get_loc_idx("B"),
-                  n::get_special_station(n::special_station::kEnd),
-                  n::unixtime_t{12h}, n::unixtime_t{13h},
-                  nr::offset{get_loc_idx("B"), 1h, kWalkTransportModeId}}},
-       .start_time_ = n::unixtime_t{11h},
-       .dest_time_ = n::unixtime_t{13h},
-       .dest_ = n::get_special_station(n::special_station::kEnd)});
-
-  taxi_journeys.push_back(
-      {.legs_ = {{n::direction::kForward,
-                  n::get_special_station(n::special_station::kStart),
-                  get_loc_idx("A"), n::unixtime_t{10h}, n::unixtime_t{11h},
-                  n::routing::offset{get_loc_idx("A"), 1h,
-                                     motis::kOdmTransportModeId}},
-                 {n::direction::kForward, get_loc_idx("A"), get_loc_idx("C"),
-                  n::unixtime_t{11h}, n::unixtime_t{13h},
-                  nr::offset{get_loc_idx("C"), 2h, motis::kFlexModeIdOffset}},
-                 {n::direction::kForward, get_loc_idx("C"),
-                  n::get_special_station(n::special_station::kEnd),
-                  n::unixtime_t{13h}, n::unixtime_t{14h},
-                  nr::offset{get_loc_idx("C"), 1h,
-                             motis::kOdmTransportModeId}}},
-       .start_time_ = n::unixtime_t{10h},
-       .dest_time_ = n::unixtime_t{14h},
-       .dest_ = n::get_special_station(n::special_station::kEnd)});
-
-  p.direct_taxi_ = {
-      direct_ride{.dep_ = n::unixtime_t{11h}, .arr_ = n::unixtime_t{12h}}};
-
-  auto first_mile_taxi_rides = std::vector<nr::start>{};
-  auto last_mile_taxi_rides = std::vector<nr::start>{};
-  extract_taxis(taxi_journeys, first_mile_taxi_rides, last_mile_taxi_rides);
-  EXPECT_FALSE(p.consume_whitelist_taxi_response(
-      invalid_response, taxi_journeys, first_mile_taxi_rides,
-      last_mile_taxi_rides));
-  EXPECT_TRUE(p.consume_whitelist_taxi_response(
-      whitelisting_response, taxi_journeys, first_mile_taxi_rides,
-      last_mile_taxi_rides));
-
-  auto ss = std::stringstream{};
-  ss << "\n";
-  for (auto const& j : taxi_journeys) {
-    j.print(ss, tt, nullptr);
-    ss << "\n";
-  }
-
-  EXPECT_EQ(adjusted_to_whitelisting, ss.str());
 }

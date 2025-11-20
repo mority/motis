@@ -66,15 +66,6 @@ bool prima::consume_blacklist_taxi_response(std::string_view json) {
     }
   };
 
-  auto const update_direct_rides = [&](json::array const& direct_times) {
-    utl::erase_if(direct_taxi_, [&](auto const& ride) {
-      return utl::none_of(direct_times, [&](auto const& t) {
-        auto const i = read_intvl(t);
-        return i.contains(ride.dep_) && i.contains(ride.arr_);
-      });
-    });
-  };
-
   try {
     auto const o = json::parse(json).as_object();
 
@@ -82,10 +73,6 @@ bool prima::consume_blacklist_taxi_response(std::string_view json) {
                        first_mile_taxi_times_);
     read_service_times(o.at("target").as_array(), last_mile_taxi_,
                        last_mile_taxi_times_);
-
-    if (direct_duration_ && *direct_duration_ < kODMMaxDuration) {
-      update_direct_rides(o.at("direct").as_array());
-    }
 
   } catch (std::exception const&) {
     n::log(n::log_lvl::debug, "motis.prima",

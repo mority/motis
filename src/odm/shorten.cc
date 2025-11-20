@@ -89,7 +89,7 @@ void shorten(std::vector<nr::journey>& odm_journeys,
       auto const new_pt_time = pt_leg.arr_time_ - pt_leg.dep_time_;
 
       n::log(n::log_lvl::debug, "motis.prima",
-             "shorten first leg: [stop: {}, ODM: {}, PT: {}] -> [stop: {}, "
+             "[shorten first leg] [stop: {}, ODM: {}, PT: {}] -> [stop: {}, "
              "ODM: {}, PT: {}] (ODM: -{}, PT: +{})",
              old_stop, old_odm_time, old_pt_time, new_stop, new_odm_time,
              new_pt_time, std::chrono::minutes{old_odm_time - new_odm_time},
@@ -161,7 +161,7 @@ void shorten(std::vector<nr::journey>& odm_journeys,
       auto const new_pt_time = pt_leg.arr_time_ - pt_leg.dep_time_;
 
       n::log(n::log_lvl::debug, "motis.prima",
-             "shorten last leg: [stop: {}, ODM: {}, PT: {}] -> [stop: {}, "
+             "[shorten last leg] [stop: {}, ODM: {}, PT: {}] -> [stop: {}, "
              "ODM: {}, PT: {}] (ODM: -{}, PT: +{})",
              old_stop, old_odm_time, old_pt_time, new_stop, new_odm_time,
              new_pt_time, std::chrono::minutes{old_odm_time - new_odm_time},
