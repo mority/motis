@@ -36,7 +36,6 @@
 #include "motis/metrics_registry.h"
 #include "motis/odm/bounds.h"
 #include "motis/odm/journeys.h"
-#include "motis/odm/mixer.h"
 #include "motis/odm/odm.h"
 #include "motis/odm/prima.h"
 #include "motis/odm/shorten.h"
@@ -50,6 +49,7 @@
 #include "motis/transport_mode_ids.h"
 
 namespace n = nigiri;
+namespace nr = nigiri::routing;
 using namespace std::chrono_literals;
 
 using td_offsets_t =
@@ -60,7 +60,6 @@ namespace motis::odm {
 constexpr auto kODMLookAhead = nigiri::duration_t{24h};
 constexpr auto kSearchIntervalSize = nigiri::duration_t{10h};
 constexpr auto kContextPadding = nigiri::duration_t{2h};
-static auto const kMixer = get_default_mixer();
 
 void print_time(auto const& start,
                 std::string_view name,
@@ -218,15 +217,16 @@ std::vector<meta_router::routing_result> meta_router::search_interval(
       });
 }
 
-std::vector<n::routing::journey> collect_odm_journeys(
+std::vector<n::routing::journey> add_odm_journeys(
+    std::vector<nr::journey>& journeys,
     std::vector<meta_router::routing_result> const& results,
     nigiri::transport_mode_id_t const mode) {
-  auto taxi_journeys = std::vector<n::routing::journey>{};
+  auto const n_journeys_before = journeys.size();
   for (auto const& r : results | std::views::drop(1)) {
     for (auto const& j : r.journeys_) {
       if (uses_odm(j, mode)) {
-        taxi_journeys.push_back(j);
-        taxi_journeys.back().transfers_ +=
+        journeys.push_back(j);
+        journeys.back().transfers_ +=
             (j.legs_.empty() || !is_odm_leg(j.legs_.front(), mode) ? 0U : 1U) +
             (j.legs_.size() < 2U || !is_odm_leg(j.legs_.back(), mode) ? 0U
                                                                       : 1U);
@@ -235,8 +235,8 @@ std::vector<n::routing::journey> collect_odm_journeys(
   }
   n::log(n::log_lvl::debug, "motis.prima",
          "[routing] collected {} mixed ODM-PT journeys for mode {}",
-         taxi_journeys.size(), mode);
-  return taxi_journeys;
+         journeys.size() - n_journeys_before, mode);
+  return journeys;
 }
 
 api::plan_response meta_router::run() {
@@ -399,47 +399,46 @@ api::plan_response meta_router::run() {
   auto const results = search_interval(sub_queries);
   utl::verify(!results.empty(), "prima: public transport result expected");
   auto const& pt_result = results.front();
-
-  auto taxi_journeys = collect_odm_journeys(results, kOdmTransportModeId);
-  shorten(taxi_journeys, p.first_mile_taxi_, p.first_mile_taxi_times_,
-          p.last_mile_taxi_, p.last_mile_taxi_times_, *tt_, rtt_, query_);
-    utl::erase_duplicates(
-      taxi_journeys, std::less<n::routing::journey>{},
-      [](auto const& a, auto const& b) {
-        return a == b &&
-               odm_time(a.legs_.front()) == odm_time(b.legs_.front()) &&
-               odm_time(a.legs_.back()) == odm_time(b.legs_.back());
-      });
-      utl::for_each(fix_odm_durations);
-
-  auto ride_share_journeys =
-      collect_odm_journeys(results, kRideSharingTransportModeId);
-
-
-  fix_first_mile_duration(ride_share_journeys, p.first_mile_ride_sharing_,
-                          p.first_mile_ride_sharing_,
-                          kRideSharingTransportModeId);
-  fix_last_mile_duration(ride_share_journeys, p.last_mile_ride_sharing_,
-                         p.last_mile_ride_sharing_,
-                         kRideSharingTransportModeId);
-
   n::log(n::log_lvl::debug, "motis.prima", "[routing] interval searched: {}",
          pt_result.interval_);
   print_time(routing_start, "[routing]",
              r_.metrics_->routing_execution_duration_seconds_routing_);
 
+  auto journeys = std::vector<nr::journey>{};
+  add_odm_journeys(journeys, results, kOdmTransportModeId);
+  shorten(journeys, p.first_mile_taxi_, p.first_mile_taxi_times_,
+          p.last_mile_taxi_, p.last_mile_taxi_times_, *tt_, rtt_, query_);
+  utl::erase_duplicates(
+      journeys, std::less<n::routing::journey>{},
+      [](auto const& a, auto const& b) {
+        return a == b &&
+               odm_time(a.legs_.front()) == odm_time(b.legs_.front()) &&
+               odm_time(a.legs_.back()) == odm_time(b.legs_.back());
+      });
+  add_odm_journeys(journeys, results, kRideSharingTransportModeId);
+  std::for_each(begin(journeys), end(journeys), fix_odm_durations);
+  if (whitelisted_ride_sharing) {
+    add_direct_odm(p.direct_ride_sharing_, journeys, from_, to_,
+                   query_.arriveBy_, kRideSharingTransportModeId);
+  }
+  journeys.insert(end(journeys), begin(pt_result.journeys_),
+                  end(pt_result.journeys_));
+  utl::sort(journeys, [](auto const& a, auto const& b) {
+    return std::tuple{a.departure_time(), a.arrival_time(), a.transfers_} <
+           std::tuple{b.departure_time(), b.arrival_time(), b.transfers_};
+  });
+
   r_.metrics_->routing_journeys_found_.Increment(
-      static_cast<double>(taxi_journeys.size()));
+      static_cast<double>(journeys.size()));
   r_.metrics_->routing_execution_duration_seconds_total_.Observe(
       static_cast<double>(std::chrono::duration_cast<std::chrono::milliseconds>(
                               std::chrono::steady_clock::now() - init_start)
                               .count()) /
       1000.0);
-
-  if (!taxi_journeys.empty()) {
-    r_.metrics_->routing_journey_duration_seconds_.Observe(static_cast<double>(
-        to_seconds(taxi_journeys.begin()->arrival_time() -
-                   taxi_journeys.begin()->departure_time())));
+  if (!journeys.empty()) {
+    r_.metrics_->routing_journey_duration_seconds_.Observe(
+        static_cast<double>(to_seconds(journeys.begin()->arrival_time() -
+                                       journeys.begin()->departure_time())));
   }
 
   return {
@@ -447,7 +446,7 @@ api::plan_response meta_router::run() {
       .to_ = to_place_,
       .direct_ = std::move(direct_),
       .itineraries_ = utl::to_vec(
-          taxi_journeys,
+          journeys,
           [&, cache = street_routing_cache_t{}](auto&& j) mutable {
             if (ep::blocked.get() == nullptr && r_.w_ != nullptr) {
               ep::blocked.reset(
