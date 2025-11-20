@@ -130,6 +130,8 @@ void extract_taxis(std::vector<nigiri::routing::journey> const&,
                    std::vector<nigiri::routing::start>& first_mile_taxi_rides,
                    std::vector<nigiri::routing::start>& last_mile_taxi_rides);
 
+void fix_odm_durations(nigiri::routing::journey &);
+
 void fix_first_mile_duration(
     std::vector<nigiri::routing::journey>& journeys,
     std::vector<nigiri::routing::start> const& first_mile,

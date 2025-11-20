@@ -399,62 +399,34 @@ api::plan_response meta_router::run() {
   auto const results = search_interval(sub_queries);
   utl::verify(!results.empty(), "prima: public transport result expected");
   auto const& pt_result = results.front();
+
   auto taxi_journeys = collect_odm_journeys(results, kOdmTransportModeId);
   shorten(taxi_journeys, p.first_mile_taxi_, p.first_mile_taxi_times_,
           p.last_mile_taxi_, p.last_mile_taxi_times_, *tt_, rtt_, query_);
-  auto ride_share_journeys =
-      collect_odm_journeys(results, kRideSharingTransportModeId);
-  fix_first_mile_duration(ride_share_journeys, p.first_mile_ride_sharing_,
-                          p.first_mile_ride_sharing_,
-                          kRideSharingTransportModeId);
-  fix_last_mile_duration(ride_share_journeys, p.last_mile_ride_sharing_,
-                         p.last_mile_ride_sharing_,
-                         kRideSharingTransportModeId);
-  utl::erase_duplicates(
+    utl::erase_duplicates(
       taxi_journeys, std::less<n::routing::journey>{},
       [](auto const& a, auto const& b) {
         return a == b &&
                odm_time(a.legs_.front()) == odm_time(b.legs_.front()) &&
                odm_time(a.legs_.back()) == odm_time(b.legs_.back());
       });
+      utl::for_each(fix_odm_durations);
+
+  auto ride_share_journeys =
+      collect_odm_journeys(results, kRideSharingTransportModeId);
+
+
+  fix_first_mile_duration(ride_share_journeys, p.first_mile_ride_sharing_,
+                          p.first_mile_ride_sharing_,
+                          kRideSharingTransportModeId);
+  fix_last_mile_duration(ride_share_journeys, p.last_mile_ride_sharing_,
+                         p.last_mile_ride_sharing_,
+                         kRideSharingTransportModeId);
+
   n::log(n::log_lvl::debug, "motis.prima", "[routing] interval searched: {}",
          pt_result.interval_);
   print_time(routing_start, "[routing]",
              r_.metrics_->routing_execution_duration_seconds_routing_);
-
-  auto const whitelist_start = std::chrono::steady_clock::now();
-  if (p.whitelist_taxi(taxi_journeys, *tt_)) {
-    add_direct_odm(p.direct_taxi_, taxi_journeys, from_, to_, query_.arriveBy_,
-                   kOdmTransportModeId);
-  }
-  if (whitelisted_ride_sharing) {
-    add_direct_odm(p.direct_ride_sharing_, ride_share_journeys, from_, to_,
-                   query_.arriveBy_, kRideSharingTransportModeId);
-  }
-  print_time(whitelist_start,
-             fmt::format("[whitelisting] (#first_mile_taxi: {}, "
-                         "#last_mile_taxi: {}, #direct_taxi: {})",
-                         p.first_mile_taxi_.size(), p.last_mile_taxi_.size(),
-                         p.direct_taxi_.size()),
-             r_.metrics_->routing_execution_duration_seconds_whitelisting_);
-  r_.metrics_->routing_odm_journeys_found_whitelist_.Observe(
-      static_cast<double>(taxi_journeys.size()));
-
-  auto const mixing_start = std::chrono::steady_clock::now();
-  n::log(n::log_lvl::debug, "motis.prima",
-         "[mixing] {} PT journeys and {} ODM journeys",
-         pt_result.journeys_.size(), taxi_journeys.size());
-  kMixer.mix(pt_result.journeys_, taxi_journeys, ride_share_journeys,
-             r_.metrics_, std::nullopt);
-  r_.metrics_->routing_odm_journeys_found_non_dominated_.Observe(
-      static_cast<double>(taxi_journeys.size() - pt_result.journeys_.size()));
-  print_time(mixing_start, "[mixing]",
-             r_.metrics_->routing_execution_duration_seconds_mixing_);
-  // remove journeys added for mixing context
-  std::erase_if(taxi_journeys, [&](auto const& j) {
-    return query_.arriveBy_ ? !search_intvl.contains(j.arrival_time())
-                            : !search_intvl.contains(j.departure_time());
-  });
 
   r_.metrics_->routing_journeys_found_.Increment(
       static_cast<double>(taxi_journeys.size()));

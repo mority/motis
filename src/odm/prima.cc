@@ -7,6 +7,7 @@
 
 #include "utl/erase_if.h"
 #include "utl/pipes.h"
+#include "utl/visit.h"
 #include "utl/zip.h"
 
 #include "nigiri/common/parse_time.h"
@@ -361,7 +362,7 @@ void fix_first_mile_duration(std::vector<nr::journey>& journeys,
       }
     }
   }
-};
+}
 
 void fix_last_mile_duration(std::vector<nr::journey>& journeys,
                             std::vector<nr::start> const& last_mile,
@@ -405,7 +406,42 @@ void fix_last_mile_duration(std::vector<nr::journey>& journeys,
       }
     }
   }
-};
+}
+
+void fix_odm_durations(nr::journey& j) {
+  if (j.legs_.size() < 2) {
+    return;
+  }
+
+  utl::visit(j.legs_.front().uses_, [&](nr::offset& o) {
+    if (o.transport_mode_id_ != kOdmTransportModeId &&
+        o.transport_mode_id_ != kRideSharingTransportModeId) {
+      return;
+    }
+    auto const l = begin(j.legs_);
+    l->arr_time_ -= kODMTransferBuffer;
+    o.duration_ -= kODMTransferBuffer;
+    j.legs_.emplace(
+              std::next(l), n::direction::kForward, l->to_, l->to_,
+              l->arr_time_, std::next(l)->dep_time_,
+              n::footpath{l->to_, std::next(l)->dep_time_ - l->arr_time_});
+  });
+
+  utl::visit(j.legs_.back().uses_, [&](nr::offset& o) {
+      if (o.transport_mode_id_ != kOdmTransportModeId &&
+        o.transport_mode_id_ != kRideSharingTransportModeId) {
+      return;
+    }
+    auto const l = std::prev(end(j.legs_));
+    l->dep_time_ += kODMTransferBuffer;
+    o.duration_ -= kODMTransferBuffer;
+              j.legs_.emplace(
+              l, n::direction::kForward, l->from_, l->from_,
+              std::prev(l)->arr_time_, l->dep_time_,
+              n::footpath{l->from_, l->dep_time_ - std::prev(l)->arr_time_});
+  }
+  );
+}
 
 void add_direct_odm(std::vector<direct_ride> const& direct,
                     std::vector<nr::journey>& odm_journeys,
