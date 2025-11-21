@@ -64,4 +64,26 @@ std::string odm_label(nr::journey const& j) {
       odm_time(j.legs_.back()));
 }
 
+void odm_pareto(std::vector<nr::journey>& odm_journeys) {
+  auto const pareto_dom = [](nr::journey const& a,
+                             nr::journey const& b) -> bool {
+    return a.dominates(b) && odm_time(a) <= odm_time(b);
+  };
+
+  for (auto b = begin(odm_journeys); b != end(odm_journeys);) {
+    auto is_dominated = false;
+    for (auto a = begin(odm_journeys); a != end(odm_journeys); ++a) {
+      if (a != b && pareto_dom(*a, *b)) {
+        is_dominated = true;
+        break;
+      }
+    }
+    if (is_dominated) {
+      b = odm_journeys.erase(b);
+    } else {
+      ++b;
+    }
+  }
+}
+
 }  // namespace motis::odm

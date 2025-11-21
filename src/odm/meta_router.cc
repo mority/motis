@@ -407,6 +407,7 @@ api::plan_response meta_router::run() {
                odm_time(a.legs_.front()) == odm_time(b.legs_.front()) &&
                odm_time(a.legs_.back()) == odm_time(b.legs_.back());
       });
+  odm_pareto(journeys);
   add_odm_journeys(journeys, results, kRideSharingTransportModeId);
   std::for_each(begin(journeys), end(journeys), fix_odm_durations);
   journeys.insert(end(journeys), begin(pt_result.journeys_),

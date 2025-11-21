@@ -35,4 +35,6 @@ nigiri::duration_t duration(nigiri::routing::start const&);
 
 std::string odm_label(nigiri::routing::journey const&);
 
+void odm_pareto(std::vector<nigiri::routing::journey>&);
+
 }  // namespace motis::odm
