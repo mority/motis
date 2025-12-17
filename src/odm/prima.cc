@@ -104,7 +104,7 @@ void prima::init(n::interval<n::unixtime_t> const& search_intvl,
                  n::routing::query const& n_query,
                  unsigned api_version) {
   auto const [_, direct_duration] = r.route_direct(
-      e, gbfs, from, to, {api::ModeEnum::CAR}, std::nullopt, std::nullopt,
+      e, gbfs, {}, from, to, {api::ModeEnum::CAR}, std::nullopt, std::nullopt,
       std::nullopt, std::nullopt, false, search_intvl.from_, false,
       get_osr_parameters(query), query.pedestrianProfile_,
       query.elevationCosts_, kODMMaxDuration, query.maxMatchingDistance_,
