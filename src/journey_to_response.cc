@@ -130,8 +130,8 @@ std::optional<std::vector<api::Alert>> get_alerts(
             .and_then(convert_to_str);
       } else {
         for (auto const& req_lang : *language) {
-          auto const it =
-              utl::find_if(translations, [&](n::translation const translation) {
+          auto const it = utl::find_if(
+              translations, [&](n::alert_translation const translation) {
                 auto const translation_lang =
                     a.strings_.try_get(translation.language_);
                 return translation_lang.has_value() &&
@@ -199,6 +199,36 @@ std::optional<std::vector<api::Alert>> get_alerts(
   return alerts.empty() ? std::nullopt : std::optional{std::move(alerts)};
 }
 
+struct parent_name_hash {
+  bool operator()(n::location_idx_t const l) const {
+    return cista::hash(tt_->get_default_name(tt_->locations_.get_root_idx(l)));
+  }
+  n::timetable const* tt_{nullptr};
+};
+
+struct parent_name_eq {
+  bool operator()(n::location_idx_t const a, n::location_idx_t const b) const {
+    return tt_->get_default_name(tt_->locations_.get_root_idx(a)) ==
+           tt_->get_default_name(tt_->locations_.get_root_idx(b));
+  }
+  n::timetable const* tt_{nullptr};
+};
+
+using unique_stop_map_t =
+    hash_map<n::location_idx_t, bool, parent_name_hash, parent_name_eq>;
+
+void get_is_unique_stop_name(n::rt::frun const& fr,
+                             n::interval<n::stop_idx_t> const& stops,
+                             unique_stop_map_t& is_unique) {
+  is_unique.clear();
+  for (auto const i : stops) {
+    auto const [it, is_new] = is_unique.emplace(fr[i].get_location_idx(), true);
+    if (!is_new) {
+      it->second = false;
+    }
+  }
+}
+
 api::Itinerary journey_to_response(
     osr::ways const* w,
     osr::lookup const* l,
@@ -232,7 +262,7 @@ api::Itinerary journey_to_response(
     unsigned const api_version,
     bool const ignore_start_rental_return_constraints,
     bool const ignore_dest_rental_return_constraints,
-    std::optional<std::vector<std::string>> const& language) {
+    n::lang_t const& lang) {
   utl::verify(!j.legs_.empty(), "journey without legs");
 
   auto const fares =
@@ -370,18 +400,25 @@ api::Itinerary journey_to_response(
         pred == nullptr ? get_first_run_tz() : pred->to_.tz_;
     auto const from =
         pred == nullptr
-            ? to_place(&tt, &tags, w, pl, matches, ae, tz_map,
+            ? to_place(&tt, &tags, w, pl, matches, ae, tz_map, lang,
                        tt_location{j_leg.from_}, start, dest, "", fallback_tz)
             : pred->to_;
     auto const to =
-        to_place(&tt, &tags, w, pl, matches, ae, tz_map, tt_location{j_leg.to_},
-                 start, dest, "", fallback_tz);
+        to_place(&tt, &tags, w, pl, matches, ae, tz_map, lang,
+                 tt_location{j_leg.to_}, start, dest, "", fallback_tz);
 
+    auto is_unique =
+        unique_stop_map_t{0U, parent_name_hash{&tt}, parent_name_eq{&tt}};
     auto const to_place = [&](n::rt::run_stop const& s,
                               n::event_type const ev_type) {
-      auto p = ::motis::to_place(&tt, &tags, w, pl, matches, ae, tz_map, s,
-                                 start, dest);
-      p.alerts_ = get_alerts(*s.fr_, std::pair{s, ev_type}, false, language);
+      auto p = ::motis::to_place(&tt, &tags, w, pl, matches, ae, tz_map, lang,
+                                 s, start, dest);
+      p.alerts_ = get_alerts(*s.fr_, std::pair{s, ev_type}, false, lang);
+      if (auto const it = is_unique.find(s.get_location_idx());
+          it != end(is_unique) && !it->second) {
+        p.name_ =
+            tt.translate(lang, tt.locations_.names_[s.get_location_idx()]);
+      }
       return p;
     };
 
@@ -397,6 +434,8 @@ api::Itinerary journey_to_response(
                 if (common_stops.size() <= 1) {
                   return;
                 }
+
+                get_is_unique_stop_name(fr, common_stops, is_unique);
 
                 auto const enter_stop = fr[common_stops.from_];
                 auto const exit_stop = fr[common_stops.to_ - 1U];
@@ -437,8 +476,8 @@ api::Itinerary journey_to_response(
                     .realTime_ = fr.is_rt(),
                     .scheduled_ = fr.is_scheduled(),
                     .interlineWithPreviousLeg_ = !is_first_part,
-                    .headsign_ =
-                        std::string{enter_stop.direction(n::event_type::kDep)},
+                    .headsign_ = std::string{enter_stop.direction(
+                        lang, n::event_type::kDep)},
                     .tripTo_ =
                         [&]() {
                           auto const last = enter_stop.get_last_trip_stop(
@@ -462,25 +501,23 @@ api::Itinerary journey_to_response(
                                         return std::optional{to_idx(x)};
                                       }),
                     .agencyName_ =
-                        std::string{
-                            tt.strings_.try_get(agency.name_).value_or("?")},
-                    .agencyUrl_ =
-                        std::string{
-                            tt.strings_.try_get(agency.url_).value_or("")},
+                        std::string{tt.translate(lang, agency.name_)},
+                    .agencyUrl_ = std::string{tt.translate(lang, agency.url_)},
                     .agencyId_ =
                         std::string{
                             tt.strings_.try_get(agency.id_).value_or("?")},
                     .tripId_ = tags.id(tt, enter_stop, n::event_type::kDep),
                     .routeShortName_ = {std::string{
-                        api_version > 3
-                            ? enter_stop.route_short_name(n::event_type::kDep)
-                            : enter_stop.display_name(n::event_type::kDep)}},
+                        api_version > 3 ? enter_stop.route_short_name(
+                                              n::event_type::kDep, lang)
+                                        : enter_stop.display_name(
+                                              n::event_type::kDep, lang)}},
                     .routeLongName_ = {std::string{
-                        enter_stop.route_long_name(n::event_type::kDep)}},
+                        enter_stop.route_long_name(n::event_type::kDep, lang)}},
                     .tripShortName_ = {std::string{
-                        enter_stop.trip_short_name(n::event_type::kDep)}},
+                        enter_stop.trip_short_name(n::event_type::kDep, lang)}},
                     .displayName_ = {std::string{
-                        enter_stop.display_name(n::event_type::kDep)}},
+                        enter_stop.display_name(n::event_type::kDep, lang)}},
                     .cancelled_ = fr.is_cancelled(),
                     .source_ = fmt::to_string(fr.dbg()),
                     .fareTransferIndex_ = fare_indices.and_then([](auto&& x) {
@@ -490,7 +527,7 @@ api::Itinerary journey_to_response(
                         fare_indices.and_then([](auto&& x) {
                           return std::optional{x.effective_fare_leg_idx_};
                         }),
-                    .alerts_ = get_alerts(fr, std::nullopt, false, language),
+                    .alerts_ = get_alerts(fr, std::nullopt, false, lang),
                     .loopedCalendarSince_ =
                         (fr.is_scheduled() &&
                          src != n::source_idx_t::invalid() &&
@@ -498,6 +535,20 @@ api::Itinerary journey_to_response(
                             ? std::optional{tt.src_end_date_[src]}
                             : std::nullopt,
                 });
+
+                auto const attributes =
+                    tt.attribute_combinations_[enter_stop
+                                                   .get_attribute_combination(
+                                                       n::event_type::kDep)];
+                if (!leg.alerts_ && !attributes.empty()) {
+                  leg.alerts_ = std::vector<api::Alert>{};
+                }
+                for (auto const& a : attributes) {
+                  leg.alerts_->push_back(api::Alert{
+                      .code_ = std::string{tt.attributes_[a].code_.view()},
+                      .headerText_ = std::string{
+                          tt.translate(lang, tt.attributes_[a].text_)}});
+                }
 
                 leg.from_.vertexType_ = api::VertexTypeEnum::TRANSIT;
                 leg.from_.departure_ = leg.startTime_;
@@ -547,7 +598,7 @@ api::Itinerary journey_to_response(
             [&](n::footpath) {
               append(w && l && detailed_transfers
                          ? street_routing(
-                               *w, *l, e, elevations, from, to,
+                               *w, *l, e, elevations, lang, from, to,
                                default_output{
                                    *w, car_transfers
                                            ? osr::search_profile::kCar
@@ -582,7 +633,7 @@ api::Itinerary journey_to_response(
               }
 
               append(street_routing(
-                  *w, *l, e, elevations, from, to, *out, j_leg.dep_time_,
+                  *w, *l, e, elevations, lang, from, to, *out, j_leg.dep_time_,
                   j_leg.arr_time_, max_matching_distance, osr_params, cache,
                   *blocked_mem, api_version,
                   std::chrono::duration_cast<std::chrono::seconds>(

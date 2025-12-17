@@ -19,12 +19,13 @@
 		type PedestrianProfile,
 		type PlanData,
 		type ReachablePlace,
-		type RentalFormFactor
+		type RentalFormFactor,
+		type ServerConfig
 	} from '@motis-project/motis-client';
 	import ItineraryList from '$lib/ItineraryList.svelte';
 	import ConnectionDetail from '$lib/ConnectionDetail.svelte';
 	import { Button } from '$lib/components/ui/button';
-	import ItineraryGeoJson from '$lib/ItineraryGeoJSON.svelte';
+	import ItineraryGeoJson from '$lib/map/itineraries/ItineraryGeoJSON.svelte';
 	import maplibregl from 'maplibre-gl';
 	import { browser } from '$app/environment';
 	import { cn, getUrlArray, onClickStop, onClickTrip, pushStateWithQueryString } from '$lib/utils';
@@ -58,7 +59,7 @@
 	} from '$lib/Modes';
 	import { defaultQuery, omitDefaults } from '$lib/defaults';
 	import { LEVEL_MIN_ZOOM } from '$lib/constants';
-	import StopGeoJSON from '$lib/StopsGeoJSON.svelte';
+	import StopGeoJSON from '$lib/map/stops/StopsGeoJSON.svelte';
 
 	const urlParams = browser ? new URLSearchParams(window.location.search) : undefined;
 
@@ -72,6 +73,7 @@
 	let showMap = $state(!isSmallScreen);
 	let lastSelectedItinerary: Itinerary | undefined = undefined;
 	let lastOneToAllQuery: OneToAllData | undefined = undefined;
+	let serverConfig: ServerConfig | undefined = $state();
 
 	$effect(() => {
 		if (activeTab == 'isochrones') {
@@ -116,6 +118,7 @@
 			if (r) {
 				center = [r.lon, r.lat];
 				zoom = r.zoom;
+				serverConfig = r.serverConfig;
 			}
 		});
 		await tick();
@@ -217,17 +220,35 @@
 	let maxTransfers = $state<number>(
 		parseIntOr(urlParams?.get('maxTransfers'), defaultQuery.maxTransfers)
 	);
-	let maxTravelTime = $state<number>(
-		parseIntOr(urlParams?.get('maxTravelTime'), defaultQuery.maxTravelTime)
+	let maxTravelTime = $derived<number>(
+		parseIntOr(
+			urlParams?.get('maxTravelTime'),
+			Math.min(
+				defaultQuery.maxTravelTime,
+				60 * (serverConfig?.maxOneToAllTravelTimeLimit ?? Infinity)
+			)
+		)
 	);
-	let maxPreTransitTime = $state<number>(
-		parseIntOr(urlParams?.get('maxPreTransitTime'), defaultQuery.maxPreTransitTime)
+	let maxPreTransitTime = $derived<number>(
+		parseIntOr(
+			urlParams?.get('maxPreTransitTime'),
+			Math.min(defaultQuery.maxPreTransitTime, serverConfig?.maxPrePostTransitTimeLimit ?? Infinity)
+		)
 	);
-	let maxPostTransitTime = $state<number>(
-		parseIntOr(urlParams?.get('maxPostTransitTime'), defaultQuery.maxPostTransitTime)
+	let maxPostTransitTime = $derived<number>(
+		parseIntOr(
+			urlParams?.get('maxPostTransitTime'),
+			Math.min(
+				defaultQuery.maxPostTransitTime,
+				serverConfig?.maxPrePostTransitTimeLimit ?? Infinity
+			)
+		)
 	);
-	let maxDirectTime = $state<number>(
-		parseIntOr(urlParams?.get('maxDirectTime'), defaultQuery.maxDirectTime)
+	let maxDirectTime = $derived<number>(
+		parseIntOr(
+			urlParams?.get('maxDirectTime'),
+			Math.min(defaultQuery.maxDirectTime, serverConfig?.maxDirectTimeLimit ?? Infinity)
+		)
 	);
 	let ignorePreTransitRentalReturnConstraints = $state(
 		urlParams?.get('ignorePreTransitRentalReturnConstraints') == 'true'
@@ -544,36 +565,35 @@
 				<Tabs.Trigger value="isochrones">{t.isochrones.title}</Tabs.Trigger>
 			</Tabs.List>
 			<Tabs.Content value="connections">
-				{#if !page.state.selectedItinerary}
-					<Card class="overflow-y-auto overflow-x-hidden bg-background rounded-lg">
-						<SearchMask
-							geocodingBiasPlace={center}
-							bind:from
-							bind:to
-							bind:time
-							bind:arriveBy
-							bind:useRoutedTransfers
-							bind:maxTransfers
-							bind:pedestrianProfile
-							bind:requireCarTransport
-							bind:requireBikeTransport
-							bind:transitModes
-							bind:preTransitModes
-							bind:postTransitModes
-							bind:directModes
-							bind:elevationCosts
-							bind:maxPreTransitTime
-							bind:maxPostTransitTime
-							bind:maxDirectTime
-							bind:ignorePreTransitRentalReturnConstraints
-							bind:ignorePostTransitRentalReturnConstraints
-							bind:ignoreDirectRentalReturnConstraints
-							bind:preTransitProviderGroups
-							bind:postTransitProviderGroups
-							bind:directProviderGroups
-						/>
-					</Card>
-				{/if}
+				<Card class="overflow-y-auto overflow-x-hidden bg-background rounded-lg">
+					<SearchMask
+						geocodingBiasPlace={center}
+						{serverConfig}
+						bind:from
+						bind:to
+						bind:time
+						bind:arriveBy
+						bind:useRoutedTransfers
+						bind:maxTransfers
+						bind:pedestrianProfile
+						bind:requireCarTransport
+						bind:requireBikeTransport
+						bind:transitModes
+						bind:preTransitModes
+						bind:postTransitModes
+						bind:directModes
+						bind:elevationCosts
+						bind:maxPreTransitTime
+						bind:maxPostTransitTime
+						bind:maxDirectTime
+						bind:ignorePreTransitRentalReturnConstraints
+						bind:ignorePostTransitRentalReturnConstraints
+						bind:ignoreDirectRentalReturnConstraints
+						bind:preTransitProviderGroups
+						bind:postTransitProviderGroups
+						bind:directProviderGroups
+					/>
+				</Card>
 			</Tabs.Content>
 			<Tabs.Content value="departures">
 				<Card class="overflow-y-auto overflow-x-hidden bg-background rounded-lg">
@@ -584,6 +604,7 @@
 				<Card class="overflow-y-auto overflow-x-hidden bg-background rounded-lg">
 					<IsochronesMask
 						bind:one
+						{serverConfig}
 						bind:maxTravelTime
 						geocodingBiasPlace={center}
 						bind:time
@@ -629,7 +650,7 @@
 				/>
 			</Card>
 		</Control>
-		{#if showMap}
+		{#if showMap && !page.state.selectedItinerary}
 			{#each routingResponses as r, rI (rI)}
 				{#await r then r}
 					{#each r.itineraries as it, i (i)}

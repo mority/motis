@@ -1,5 +1,4 @@
 import type { StyleSpecification } from 'maplibre-gl';
-
 const colors = {
 	light: {
 		background: '#f8f4f0',
@@ -7,6 +6,7 @@ const colors = {
 		water: '#99ddff',
 		rail: '#a8a8a8',
 		pedestrian: '#e8e7eb',
+		ferryRoute: 'rgba(102, 102, 255, 0.5)',
 
 		sport: '#d0f4be',
 		sportOutline: '#b3e998',
@@ -65,6 +65,7 @@ const colors = {
 		water: '#1f2830',
 		rail: '#808080',
 		pedestrian: '#292929',
+		ferryRoute: 'rgba(58, 77, 139, 0.5)',
 
 		sport: '#272525',
 		sportOutline: '#272525',
@@ -355,7 +356,7 @@ export const getStyle = (
 				}
 			},
 			{
-				id: 'steps',
+				id: 'stairs-ground',
 				type: 'line',
 				source: 'osm',
 				'source-layer': 'road',
@@ -372,28 +373,85 @@ export const getStyle = (
 						: ['any', ['==', 'from_level', level], ['==', 'to_level', level]]
 				],
 				paint: {
-					'line-dasharray': [0.5, 0.5],
-					'line-color': c.steps,
-					'line-opacity': 1,
+					'line-color': '#ddddddff',
 					'line-width': [
-						'let',
-						'base',
-						0.4,
-						[
-							'interpolate',
-							['linear'],
-							['zoom'],
-							5,
-							['+', ['*', ['var', 'base'], 0.1], 1],
-							9,
-							['+', ['*', ['var', 'base'], 0.4], 1],
-							12,
-							['+', ['*', ['var', 'base'], 1], 1],
-							16,
-							['+', ['*', ['var', 'base'], 4], 1],
-							20,
-							['+', ['*', ['var', 'base'], 8], 1]
-						]
+						'interpolate',
+						['exponential', 2],
+						['zoom'],
+						10,
+						['*', 4, ['^', 2, -6]],
+						24,
+						['*', 4, ['^', 2, 8]]
+					]
+				}
+			},
+			{
+				id: 'stairs-steps',
+				type: 'line',
+				source: 'osm',
+				'source-layer': 'road',
+				minzoom: 18,
+				filter: [
+					'all',
+					['==', 'highway', 'steps'],
+					level === 0
+						? [
+								'any',
+								['!has', 'from_level'],
+								['any', ['==', 'from_level', level], ['==', 'to_level', level]]
+							]
+						: ['any', ['==', 'from_level', level], ['==', 'to_level', level]]
+				],
+				paint: {
+					'line-color': '#bfbfbf',
+					'line-dasharray': ['literal', [0.01, 0.1]],
+					'line-width': [
+						'interpolate',
+						['exponential', 2],
+						['zoom'],
+						10,
+						['*', 4, ['^', 2, -6]],
+						24,
+						['*', 4, ['^', 2, 8]]
+					]
+				}
+			},
+			{
+				id: 'stairs-rail',
+				type: 'line',
+				source: 'osm',
+				'source-layer': 'road',
+				minzoom: 18,
+				filter: [
+					'all',
+					['==', 'highway', 'steps'],
+					level === 0
+						? [
+								'any',
+								['!has', 'from_level'],
+								['any', ['==', 'from_level', level], ['==', 'to_level', level]]
+							]
+						: ['any', ['==', 'from_level', level], ['==', 'to_level', level]]
+				],
+				paint: {
+					'line-color': '#808080',
+					'line-width': [
+						'interpolate',
+						['exponential', 2],
+						['zoom'],
+						10,
+						['*', 0.25, ['^', 2, -6]],
+						24,
+						['*', 0.25, ['^', 2, 8]]
+					],
+					'line-gap-width': [
+						'interpolate',
+						['exponential', 2],
+						['zoom'],
+						10,
+						['*', 4, ['^', 2, -6]],
+						24,
+						['*', 4, ['^', 2, 8]]
 					]
 				}
 			},
@@ -588,6 +646,17 @@ export const getStyle = (
 							['*', ['var', 'base'], 3]
 						]
 					]
+				}
+			},
+			{
+				id: 'ferry_routes',
+				type: 'line',
+				source: 'osm',
+				'source-layer': 'ferry',
+				paint: {
+					'line-width': 1.5,
+					'line-dasharray': [2, 3],
+					'line-color': c.ferryRoute
 				}
 			},
 			{
