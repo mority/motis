@@ -12,7 +12,6 @@
 		plan,
 		type ElevationCosts,
 		type OneToAllData,
-		type OneToAllResponse,
 		type PlanResponse,
 		type Itinerary,
 		type Mode,
@@ -159,6 +158,25 @@
 	let to = $state<Location>(parseLocation(urlParams?.get('toPlace'), urlParams?.get('toName')));
 	let one = $state<Location>(parseLocation(urlParams?.get('one'), urlParams?.get('oneName')));
 	let stop = $state<Location>();
+
+	let viaParam = getUrlArray('via');
+	let viaLabels = $state(
+		urlParams?.has('viaLabel0')
+			? Array.from({ length: viaParam.length }).reduce<Record<string, string>>((acc, _, i) => {
+					acc[`viaLabel${i}`] = urlParams?.get(`viaLabel${i}`) ?? '';
+					return acc;
+				}, {})
+			: {}
+	);
+	let via = $state(
+		urlParams?.has('via')
+			? viaParam.map((str, i) => parseLocation(str, viaLabels[`viaLabel${i}`]))
+			: undefined
+	);
+	let viaMinimumStay = $state(
+		urlParams?.has('via') ? getUrlArray('viaMinimumStay').map((s) => parseIntOr(s, 0)) : undefined
+	);
+
 	let time = $state<Date>(new Date(urlParams?.get('time') || Date.now()));
 	let timetableView = $state(urlParams?.get('timetableView') != 'false');
 	let searchWindow = $state(
@@ -269,7 +287,8 @@
 		color: urlParams?.get('isochronesColor') ?? defaultQuery.isochronesColor,
 		opacity: parseIntOr(urlParams?.get('isochronesOpacity'), defaultQuery.isochronesOpacity),
 		status: 'DONE',
-		error: undefined
+		errorMessage: undefined,
+		errorCode: undefined
 	});
 	const isochronesCircleResolution = urlParams?.get('isochronesCircleResolution')
 		? parseIntOr(urlParams.get('isochronesCircleResolution'), defaultQuery.circleResolution)
@@ -340,11 +359,14 @@
 						ignorePreTransitRentalReturnConstraints,
 						ignorePostTransitRentalReturnConstraints,
 						ignoreDirectRentalReturnConstraints,
-						algorithm
+						algorithm,
+						via: via ? via.map((v) => v.match?.id) : undefined,
+						viaMinimumStay
 					} as PlanData['query'])
 				} as PlanData)
 			: undefined
 	);
+
 	let isochronesQuery = $derived(
 		one?.match
 			? ({
@@ -388,7 +410,8 @@
 					{
 						...q,
 						...(q.fromPlace == from.label ? {} : { fromName: from.label }),
-						...(q.toPlace == to.label ? {} : { toName: to.label })
+						...(q.toPlace == to.label ? {} : { toName: to.label }),
+						...viaLabels
 					},
 					{},
 					true
@@ -408,29 +431,32 @@
 				lastOneToAllQuery = isochronesQuery;
 				clearTimeout(isochronesQueryTimeout);
 				isochronesOptions.status = 'WORKING';
-				isochronesOptions.error = undefined;
-				isochronesQueryTimeout = setTimeout(() => {
-					oneToAll(isochronesQuery)
-						.then((r: { data: OneToAllResponse | undefined; error: unknown }) => {
-							if (r.error) {
-								const msg = (r.error as { error: string }).error;
-								throw new Error(String(msg));
-							}
-							const all = r.data!.all!.map((p: ReachablePlace) => {
-								return {
-									lat: p.place?.lat,
-									lng: p.place?.lon,
-									seconds: maxTravelTime - 60 * (p.duration ?? 0),
-									name: p.place?.name
-								} as IsochronesPos;
-							});
-							isochronesData = [...all];
-							isochronesOptions.status = isochronesData.length == 0 ? 'EMPTY' : 'WORKING';
-						})
-						.catch((e: Error) => {
+				isochronesOptions.errorMessage = undefined;
+				isochronesQueryTimeout = setTimeout(async () => {
+					try {
+						const { data, error, response } = await oneToAll(isochronesQuery);
+						if (error) {
 							isochronesOptions.status = 'FAILED';
-							isochronesOptions.error = e.message;
+							isochronesOptions.errorCode = response.status;
+							isochronesOptions.errorMessage = error.error;
+							return;
+						}
+						const all = data!.all!.map((p: ReachablePlace) => {
+							return {
+								lat: p.place?.lat,
+								lng: p.place?.lon,
+								seconds: maxTravelTime - 60 * (p.duration ?? 0),
+								name: p.place?.name
+							} as IsochronesPos;
 						});
+
+						isochronesData = [...all];
+						isochronesOptions.status = isochronesData.length == 0 ? 'EMPTY' : 'WORKING';
+					} catch (e) {
+						isochronesOptions.status = 'FAILED';
+						isochronesOptions.errorMessage = String(e);
+						isochronesOptions.errorCode = 404;
+					}
 				}, 60);
 			}
 			untrack(() => {
@@ -592,6 +618,9 @@
 						bind:preTransitProviderGroups
 						bind:postTransitProviderGroups
 						bind:directProviderGroups
+						bind:via
+						bind:viaMinimumStay
+						bind:viaLabels
 					/>
 				</Card>
 			</Tabs.Content>
