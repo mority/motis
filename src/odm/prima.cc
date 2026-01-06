@@ -102,13 +102,15 @@ void prima::init(n::interval<n::unixtime_t> const& search_intvl,
                  api::Place const& to,
                  api::plan_params const& query,
                  n::routing::query const& n_query,
-                 unsigned api_version) {
-  auto const [_, direct_duration] = r.route_direct(
+                 unsigned api_version,
+                 std::vector<api::Itinerary>& direct) {
+  auto const [car_direct, direct_duration] = r.route_direct(
       e, gbfs, {}, from, to, {api::ModeEnum::CAR}, std::nullopt, std::nullopt,
       std::nullopt, std::nullopt, false, search_intvl.from_, false,
       get_osr_parameters(query), query.pedestrianProfile_,
       query.elevationCosts_, kODMMaxDuration, query.maxMatchingDistance_,
       kODMDirectFactor, api_version);
+  direct.insert(end(direct), begin(car_direct), end(car_direct));
 
   auto const max_offset_duration =
       std::min(direct_duration,

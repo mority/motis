@@ -69,7 +69,8 @@ struct prima {
             api::Place const& to,
             api::plan_params const& query,
             nigiri::routing::query const& n_query,
-            unsigned api_version);
+            unsigned api_version,
+            std::vector<api::Itinerary> & direct);
 
   std::size_t n_ride_sharing_events() const;
 

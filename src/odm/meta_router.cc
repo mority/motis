@@ -282,7 +282,7 @@ api::plan_response meta_router::run() {
   p.init(search_intvl, taxi_intvl, odm_pre_transit_, odm_post_transit_,
          ride_sharing_pre_transit_, ride_sharing_post_transit_, *tt_, rtt_, r_,
          e_, gbfs_rd_, from_place_, to_place_, query_, start_time_,
-         api_version_);
+         api_version_, direct_);
 
   std::erase(start_modes_, api::ModeEnum::ODM);
   std::erase(start_modes_, api::ModeEnum::RIDE_SHARING);
