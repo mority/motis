@@ -989,7 +989,7 @@ api::plan_response routing::operator()(boost::urls::url_view const& url) const {
                   query.maxMatchingDistance_, api_version,
                   query.ignorePreTransitRentalReturnConstraints_,
                   query.ignorePostTransitRentalReturnConstraints_,
-                  query.language_);
+                  query.language_, &search_state);
             }),
         .previousPageCursor_ =
             fmt::format("EARLIER|{}", to_seconds(search_interval.from_)),

@@ -2738,6 +2738,9 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Mode"
+        lb:
+          description: the lower bounds value during search
+          type: integer
 
     ReachablePlace:
       description: Place reachable by One-to-All

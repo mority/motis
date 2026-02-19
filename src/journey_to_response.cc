@@ -262,7 +262,8 @@ api::Itinerary journey_to_response(
     unsigned const api_version,
     bool const ignore_start_rental_return_constraints,
     bool const ignore_dest_rental_return_constraints,
-    n::lang_t const& lang) {
+    n::lang_t const& lang,
+    n::routing::search_state const* ss) {
   utl::verify(!j.legs_.empty(), "journey without legs");
 
   auto const fares =
@@ -654,6 +655,27 @@ api::Itinerary journey_to_response(
   }
 
   cleanup_intermodal(itinerary);
+
+  if (ss != nullptr) {
+    auto const add_lb = [&](api::Place& p) {
+      if (p.stopId_) {
+        auto const loc = tags.find_location(tt, *p.stopId_);
+        if (loc) {
+          p.lb_ = ss->travel_time_lower_bound_[loc.value().v_];
+        }
+      }
+    };
+
+    for (auto& leg : itinerary.legs_) {
+      add_lb(leg.from_);
+      add_lb(leg.to_);
+      if (leg.intermediateStops_) {
+        for (auto& is : *leg.intermediateStops_) {
+          add_lb(is);
+        }
+      }
+    }
+  }
 
   return itinerary;
 }

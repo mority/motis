@@ -1,15 +1,12 @@
 #pragma once
 
-#include <string_view>
-#include <variant>
-
 #include "nigiri/routing/journey.h"
+#include "nigiri/routing/search.h"
 #include "nigiri/rt/frun.h"
 #include "nigiri/types.h"
 
-#include "osr/location.h"
-#include "osr/routing/route.h"
-#include "osr/types.h"
+#include <string_view>
+#include <variant>
 
 #include "motis-api/motis-api.h"
 #include "motis/elevators/elevators.h"
@@ -19,6 +16,9 @@
 #include "motis/osr/street_routing.h"
 #include "motis/place.h"
 #include "motis/types.h"
+#include "osr/location.h"
+#include "osr/routing/route.h"
+#include "osr/types.h"
 
 namespace motis {
 
@@ -66,6 +66,7 @@ api::Itinerary journey_to_response(
     unsigned api_version,
     bool ignore_start_rental_return_constraints,
     bool ignore_dest_rental_return_constraints,
-    std::optional<std::vector<std::string>> const& language);
+    std::optional<std::vector<std::string>> const& language,
+    nigiri::routing::search_state const* ss = nullptr);
 
 }  // namespace motis
