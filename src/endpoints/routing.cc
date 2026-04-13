@@ -29,6 +29,7 @@
 #include "nigiri/routing/query.h"
 #include "nigiri/routing/raptor/raptor_state.h"
 #include "nigiri/routing/raptor_search.h"
+#include "nigiri/routing/tb/tb_a_star/a_star_search.h"
 
 #include "nigiri/routing/raptor/pong.h"
 #include "nigiri/routing/tb/query_engine.h"
@@ -978,13 +979,26 @@ api::plan_response routing::operator()(boost::urls::url_view const& url) const {
           // TRUE     |  TRUE         | FALSE    => rRAPTOR
           query.arriveBy_ != start_time.extend_interval_later_) {
         try {
-          auto raptor_state = n::routing::raptor_state{};
-          r = n::routing::pong_search(
-              *tt_, rtt, search_state, raptor_state, q,
-              query.arriveBy_ ? n::direction::kBackward
-                              : n::direction::kForward,
-              query.timeout_.has_value() ? std::chrono::seconds{*query.timeout_}
-                                         : max_timeout);
+          auto tb_state = n::routing::tb::query_state{*tt_, *tbd_};
+          auto const tb_start = std::chrono::steady_clock::now();
+          r = n::routing::tb::tb_search(*tt_, search_state, tb_state, q);
+          fmt::println("tb time: {}",
+                       std::chrono::duration_cast<std::chrono::milliseconds>(
+                           std::chrono::steady_clock::now() - tb_start));
+          for (auto const& j : *r.journeys_) {
+            j.print(std::cout, *tt_, rtt);
+          }
+
+          auto astar_state = n::routing::tb::a_star::a_star_state{*tbd_};
+          auto const astar_start = std::chrono::steady_clock::now();
+          r = n::routing::astar_search(*tt_, search_state, astar_state, q);
+          fmt::print("astar time: {}",
+                     std::chrono::duration_cast<std::chrono::milliseconds>(
+                         std::chrono::steady_clock::now() - astar_start));
+          for (auto const& j : *r.journeys_) {
+            j.print(std::cout, *tt_, rtt);
+          }
+
         } catch (std::exception const& e) {
           std::cout << "PONG EXCEPTION: " << e.what() << "\n";
           algorithm = api::algorithmEnum::RAPTOR;
