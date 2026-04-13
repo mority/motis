@@ -987,19 +987,21 @@ api::plan_response routing::operator()(boost::urls::url_view const& url) const {
           auto tb_state = n::routing::tb::query_state{*tt_, *tbd_};
           auto const tb_start = std::chrono::steady_clock::now();
           r = n::routing::tb::tb_search(*tt_, search_state, tb_state, q);
-          fmt::println("tb time: {}",
+          fmt::println("tb time: {}\njourneys:\n",
                        std::chrono::duration_cast<std::chrono::milliseconds>(
                            std::chrono::steady_clock::now() - tb_start));
           for (auto const& j : *r.journeys_) {
             j.print(std::cout, *tt_, rtt);
           }
 
+          fmt::print("\n\n");
+
           auto astar_state = n::routing::tb::a_star::a_star_state{*tbd_};
           auto const astar_start = std::chrono::steady_clock::now();
           r = n::routing::astar_search(*tt_, search_state, astar_state, q);
-          fmt::print("astar time: {}",
-                     std::chrono::duration_cast<std::chrono::milliseconds>(
-                         std::chrono::steady_clock::now() - astar_start));
+          fmt::println("astar time: {}\njourneys:\n",
+                       std::chrono::duration_cast<std::chrono::milliseconds>(
+                           std::chrono::steady_clock::now() - astar_start));
           for (auto const& j : *r.journeys_) {
             j.print(std::cout, *tt_, rtt);
           }
