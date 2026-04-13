@@ -860,7 +860,12 @@ api::plan_response routing::operator()(boost::urls::url_view const& url) const {
                                  std::holds_alternative<osr::location>(dest);
 
     auto q = n::routing::query{
-        .start_time_ = start_time.start_time_,
+        .start_time_ = utl::visit(
+            start_time.start_time_,
+            [](nigiri::unixtime_t const t) { return t; },
+            [](nigiri::interval<nigiri::unixtime_t> const& i) {
+              return i.from_;
+            }),
         .start_match_mode_ = use_radius_start
                                  ? n::routing::location_match_mode::kIntermodal
                                  : get_match_mode(*this, start),
