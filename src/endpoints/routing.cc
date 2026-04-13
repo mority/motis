@@ -864,7 +864,7 @@ api::plan_response routing::operator()(boost::urls::url_view const& url) const {
             start_time.start_time_,
             [](nigiri::unixtime_t const t) { return t; },
             [](nigiri::interval<nigiri::unixtime_t> const& i) {
-              return i.from_;
+              return nigiri::unixtime_t{i.from_};
             }),
         .start_match_mode_ = use_radius_start
                                  ? n::routing::location_match_mode::kIntermodal
