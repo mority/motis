@@ -1,11 +1,13 @@
 #include <fstream>
 #include <iostream>
+#include <sstream>
 
 #include "conf/configuration.h"
 
 #include "utl/init_from.h"
 #include "utl/parallel_for.h"
 #include "utl/parser/cstr.h"
+#include "utl/verify.h"
 
 #include "motis/config.h"
 #include "motis/data.h"
@@ -133,6 +135,9 @@ int batch(int ac, char** av) {
   auto responses_path = fs::path{"responses.txt"};
   auto n_threads = std::thread::hardware_concurrency();
   auto rt = false;
+  auto random_delays = false;
+  auto rd = random_delay_options{};
+  auto rd_base_day = std::string{};
 
   auto desc = po::options_description{"Options"};
   desc.add_options()  //
@@ -145,7 +150,29 @@ int batch(int ac, char** av) {
       ("rt", po::bool_switch(&rt),
        "apply a canned rt update (dump_rt/ in the working directory, written "
        "by a server run with an existing dump_rt directory) before running "
-       "the queries");
+       "the queries")  //
+      ("random_delays", po::bool_switch(&random_delays),
+       "generate random delays before running the queries: deterministic, "
+       "i.e. same binary + same timetable + same options = same rt "
+       "timetable")  //
+      ("rd_p_delay",
+       po::value(&rd.delay_probability_)->default_value(rd.delay_probability_),
+       "random delays: probability that a transport is delayed")  //
+      ("rd_p_cancel",
+       po::value(&rd.cancel_probability_)
+           ->default_value(rd.cancel_probability_),
+       "random delays: probability that a transport is cancelled")  //
+      ("rd_max_delay", po::value(&rd.max_delay_)->default_value(rd.max_delay_),
+       "random delays: maximum delay in minutes")  //
+      ("rd_base_day", po::value(&rd_base_day),
+       "random delays: base day of the rt timetable, format: YYYY-MM-DD "
+       "(default: first day of the timetable, i.e. the same day `motis "
+       "generate` starts its default query window at)")  //
+      ("rd_first_day", po::value(&rd.first_day_)->default_value(rd.first_day_),
+       "random delays: first day to generate rt data for, relative to the "
+       "base day")  //
+      ("rd_n_days", po::value(&rd.n_days_)->default_value(rd.n_days_),
+       "random delays: number of days to generate rt data for");
   add_data_path_opt(desc, data_path);
 
   auto vm = parse_opt(ac, av, desc);
@@ -153,6 +180,9 @@ int batch(int ac, char** av) {
     std::cout << desc << "\n";
     return 0;
   }
+
+  utl::verify(!(rt && random_delays),
+              "--rt and --random_delays are mutually exclusive");
 
   auto queries = std::vector<std::string_view>{};
   auto f = cista::mmap{queries_path.generic_string().c_str(),
@@ -171,6 +201,17 @@ int batch(int ac, char** av) {
 
   if (rt) {
     apply_canned_rt_update(c, d);
+  }
+  if (random_delays) {
+    if (!rd_base_day.empty()) {
+      auto in = std::istringstream{rd_base_day};
+      auto base_day = date::sys_days{};
+      in >> date::parse("%F", base_day);
+      utl::verify(!in.fail(), "invalid rd_base_day {}, format: YYYY-MM-DD",
+                  rd_base_day);
+      rd.base_day_ = base_day;
+    }
+    apply_random_delays_rt_update(d, rd);
   }
   gbfs::apply_canned_gbfs_update(c, d);
 
