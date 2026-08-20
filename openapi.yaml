@@ -970,6 +970,13 @@ paths:
             - `REALTIME_ANNOTATION_ONLY`: routing uses the scheduled timetable
               only, but the response is annotated with realtime data.
             - `OFF`: only the scheduled timetable is used.
+            - `REALTIME_AND_SCHEDULED`: both results are computed in one search.
+              `itineraries` contains the realtime result (as with `REALTIME`),
+              `scheduledItineraries` contains the result of the scheduled
+              timetable (as with `OFF`), annotated with realtime data.
+              Only supported by the `RAPTOR` and `PONG` algorithms on the CPU;
+              other algorithms fall back to `REALTIME` and omit
+              `scheduledItineraries`.
           schema:
             $ref: '#/components/schemas/RealtimeMode'
             default: REALTIME
@@ -1062,6 +1069,24 @@ paths:
                       $ref: '#/components/schemas/Itinerary'
                   itineraries:
                     description: list of itineraries
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Itinerary'
+                  scheduledItineraries:
+                    description: |
+                      Only set for `realtimeMode=REALTIME_AND_SCHEDULED`.
+
+                      The itineraries that are optimal according to the
+                      scheduled timetable, i.e. what `realtimeMode=OFF` would
+                      return - but annotated with realtime data, so a client can
+                      show whether the journey the traveller may have planned
+                      still works or is broken (e.g. a transfer that can no
+                      longer be made because of a delay).
+
+                      `startTime`/`endTime` of these itineraries are the
+                      scheduled times; the per-leg `startTime`/`endTime` carry
+                      the realtime times and `scheduledStartTime`/
+                      `scheduledEndTime` the scheduled ones.
                     type: array
                     items:
                       $ref: '#/components/schemas/Itinerary'
@@ -4278,11 +4303,18 @@ components:
         - `REALTIME_ANNOTATION_ONLY`: route, sort and window on the scheduled
           timetable only, but still annotate the response with realtime data.
         - `OFF`: use the scheduled timetable only, with no realtime annotation.
+        - `REALTIME_AND_SCHEDULED`: routing only. Compute the `REALTIME` and the
+          `OFF` result in one go: `itineraries` holds the realtime-optimal
+          journeys, `scheduledItineraries` holds the journeys that are optimal
+          according to the scheduled timetable - annotated with realtime data so
+          a client can show whether a journey the traveller may have planned
+          still works. Endpoints other than `plan` treat this like `REALTIME`.
       type: string
       enum:
         - OFF
         - REALTIME_ANNOTATION_ONLY
         - REALTIME
+        - REALTIME_AND_SCHEDULED
 
     PedestrianProfile:
       description: Different accessibility profiles for pedestrians.

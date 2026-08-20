@@ -38,6 +38,7 @@ int compare(int ac, char** av) {
   auto subset_check = false;
   auto queries_path = fs::path{"queries.txt"};
   auto responses_paths = std::vector<std::string>{};
+  auto fields = std::vector<std::string>{};
   auto fails_path = fs::path{"fail"};
   auto desc = po::options_description{"Options"};
   desc.add_options()  //
@@ -50,13 +51,31 @@ int compare(int ac, char** av) {
        po::value(&responses_paths)
            ->multitoken()
            ->default_value(responses_paths),
-       "response files");
+       "response files")  //
+      ("fields,f",
+       po::value(&fields)->multitoken()->default_value(fields),
+       "which response array to compare, one per response file: "
+       "\"itineraries\" (default) or \"scheduledItineraries\" (the scheduled "
+       "slot of realtimeMode=REALTIME_AND_SCHEDULED). A single value applies "
+       "to all response files.");
 
   auto vm = parse_opt(ac, av, desc);
   if (vm.count("help")) {
     std::cout << desc << "\n";
     return 0;
   }
+
+  utl::verify(fields.size() <= 1U || fields.size() == responses_paths.size(),
+              "--fields: expected 0, 1 or {} values, got {}",
+              responses_paths.size(), fields.size());
+  for (auto const& f : fields) {
+    utl::verify(f == "itineraries" || f == "scheduledItineraries",
+                "--fields: unknown field \"{}\"", f);
+  }
+  auto const use_scheduled = [&](std::size_t const i) {
+    return !fields.empty() &&
+           fields[fields.size() == 1U ? 0U : i] == "scheduledItineraries";
+  };
 
   auto const write_fails = fs::is_directory(fails_path);
   if (!write_fails) {
@@ -183,6 +202,11 @@ int compare(int ac, char** av) {
           if (val.is_object() &&
               val.as_object().contains("requestParameters")) {
             auto res = json::value_to<api::plan_response>(val);
+            if (use_scheduled(i)) {
+              res.itineraries_ =
+                  std::move(res.scheduledItineraries_)
+                      .value_or(std::vector<api::Itinerary>{});
+            }
             utl::sort(res.itineraries_, [&](auto&& a, auto&& b) {
               return params(a) < params(b);
             });

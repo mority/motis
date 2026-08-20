@@ -786,6 +786,12 @@ api::plan_response routing::route(api::plan_params const& query,
       query.maxItineraries_.value_or(0), query.numItineraries_);
 
   auto const rt = std::atomic_load(&rt_);
+  // `REALTIME_AND_SCHEDULED` computes the `REALTIME` and the `OFF` result in
+  // one search (nigiri `rt_mode::both`): the realtime-optimal journeys go to
+  // `itineraries`, the journeys that are optimal on the scheduled timetable go
+  // to `scheduledItineraries`.
+  auto const with_scheduled =
+      query.realtimeMode_ == api::RealtimeModeEnum::REALTIME_AND_SCHEDULED;
   // `rtt` is used for routing/sorting/windowing:
   auto const rtt =
       (query.realtimeMode_ == api::RealtimeModeEnum::OFF ||
@@ -1089,7 +1095,8 @@ api::plan_response routing::route(api::plan_params const& query,
                                : std::optional{fastest_direct},
         .fastest_direct_factor_ = query.fastestDirectFactor_,
         .slow_direct_ = query.slowDirect_,
-        .fastest_slow_direct_factor_ = query.fastestSlowDirectFactor_};
+        .fastest_slow_direct_factor_ = query.fastestSlowDirectFactor_,
+        .rt_mode_both_ = with_scheduled};
     remove_slower_than_fastest_direct(q);
     UTL_STOP_TIMING(query_preparation);
 
@@ -1164,6 +1171,7 @@ api::plan_response routing::route(api::plan_params const& query,
           continue;
         }
       } else if (algorithm == api::algorithmEnum::RAPTOR || tbd_ == nullptr ||
+                 with_scheduled ||
                  (rtt != nullptr && rtt->n_rt_transports() != 0U) ||
                  query.arriveBy_ || q.prf_idx_ != tbd_->prf_idx_ ||
                  q.allowed_claszes_ != n::routing::all_clasz_allowed() ||
@@ -1221,29 +1229,50 @@ api::plan_response routing::route(api::plan_params const& query,
     }
 
     auto fares_time = std::chrono::nanoseconds{0};
-    auto itineraries = utl::to_vec(
-        journeys, [&, cache = street_routing_cache_t{}](auto&& j) mutable {
-          return journey_to_response(
-              w_, l_, pl_, *tt_, *tags_, fa_, e, annotation_rtt, matches_,
-              elevations_, shapes_, gbfs_rd, ae_, tz_, j, start, dest, cache,
-              blocked.get(),
-              query.requireCarTransport_ && query.useRoutedTransfers_,
-              osr_params, query.pedestrianProfile_, query.elevationCosts_,
-              query.joinInterlinedLegs_, detailed_transfers,
-              query.detailedLegs_, query.withFares_,
-              query.withScheduledSkippedStops_,
-              config_.timetable_.value().max_matching_distance_,
-              max_matching_distance, api_version,
-              query.ignorePreTransitRentalReturnConstraints_,
-              query.ignorePostTransitRentalReturnConstraints_, query.language_,
-              true,
-              query.numLegAlternatives_ > 0
-                  ? alternatives_context{query_alternatives{
-                        q_for_alts,
-                        static_cast<std::size_t>(query.numLegAlternatives_)}}
-                  : alternatives_context{},
-              &fares_time);
-        });
+    auto const to_itineraries = [&](std::vector<n::routing::journey>& js) {
+      return utl::to_vec(
+          js, [&, cache = street_routing_cache_t{}](auto&& j) mutable {
+            return journey_to_response(
+                w_, l_, pl_, *tt_, *tags_, fa_, e, annotation_rtt, matches_,
+                elevations_, shapes_, gbfs_rd, ae_, tz_, j, start, dest, cache,
+                blocked.get(),
+                query.requireCarTransport_ && query.useRoutedTransfers_,
+                osr_params, query.pedestrianProfile_, query.elevationCosts_,
+                query.joinInterlinedLegs_, detailed_transfers,
+                query.detailedLegs_, query.withFares_,
+                query.withScheduledSkippedStops_,
+                config_.timetable_.value().max_matching_distance_,
+                max_matching_distance, api_version,
+                query.ignorePreTransitRentalReturnConstraints_,
+                query.ignorePostTransitRentalReturnConstraints_,
+                query.language_, true,
+                query.numLegAlternatives_ > 0
+                    ? alternatives_context{query_alternatives{
+                          q_for_alts,
+                          static_cast<std::size_t>(query.numLegAlternatives_)}}
+                    : alternatives_context{},
+                &fares_time);
+          });
+    };
+
+    auto itineraries = to_itineraries(journeys);
+
+    // Scheduled slot of `rt_mode::both`. The same post-processing as for the
+    // realtime slot, but the search interval stays the one of the realtime
+    // slot (it drives the interval extension) - so `shrink` must not write
+    // back into `search_interval` here.
+    auto scheduled_itineraries =
+        std::optional<std::vector<api::Itinerary>>{};
+    if (with_scheduled && r.journeys_sched_ != nullptr) {
+      auto scheduled_journeys = r.journeys_sched_->els_;
+      if (query.maxItineraries_.has_value()) {
+        shrink(start_time.extend_interval_earlier_,
+               static_cast<std::size_t>(*query.maxItineraries_), r.interval_,
+               scheduled_journeys);
+      }
+      direct_filter(direct, scheduled_journeys);
+      scheduled_itineraries = to_itineraries(scheduled_journeys);
+    }
 
     return {
         .debugOutput_ =
@@ -1255,6 +1284,7 @@ api::plan_response routing::route(api::plan_params const& query,
         .to_ = bwd_compat_lvl_adjust(std::move(to_p), api_version),
         .direct_ = std::move(direct),
         .itineraries_ = std::move(itineraries),
+        .scheduledItineraries_ = std::move(scheduled_itineraries),
         .previousPageCursor_ =
             fmt::format("EARLIER|{}", to_seconds(search_interval.from_)),
         .nextPageCursor_ =
