@@ -26,21 +26,21 @@ struct random_delay_options {
   // Maximum delay in minutes.
   unsigned max_delay_{30U};
 
-  // Base day of the real-time timetable. Default: the first day of the
-  // timetable, which is where `motis generate` starts its default query
-  // window. Real-time data can only be generated for days close to the base
-  // day (~3 weeks, limited by `delta_t`), so the base day has to match the
-  // days the queries are asking for.
-  std::optional<date::sys_days> base_day_{};
-
-  // Days to generate real-time data for, relative to the base day of the
-  // real-time timetable: [base_day + first_day_, base_day + first_day_ +
-  // n_days_). The default covers the 15 days `motis generate` distributes its
-  // queries over by default (first day of the timetable + 14 days) plus the
-  // day before to also give transports running over midnight real-time data.
-  int first_day_{-1};
-  unsigned n_days_{16U};
+  // The day real-time data is generated for. Real-time feeds normally only
+  // cover what is currently running, so this generates data for this day and
+  // the following one - the following day so that journeys departing on
+  // `date_` and travelling overnight still see real-time data, matching a feed
+  // that already knows about tomorrow's early departures.
+  //
+  // Also the base day of the real-time timetable. Default: the first day of
+  // the timetable, which is where `motis generate` starts its default query
+  // window. All queries should ask for `date_`, otherwise they route on the
+  // scheduled timetable in all but name.
+  std::optional<date::sys_days> date_{};
 };
+
+// Number of days `generate_random_delays()` covers: `date_` and the day after.
+constexpr auto const kRandomDelayDays = 2;
 
 // Deterministically generates random delays and cancellations in `rtt`.
 //

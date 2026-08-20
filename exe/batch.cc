@@ -137,7 +137,7 @@ int batch(int ac, char** av) {
   auto rt = false;
   auto random_delays = false;
   auto rd = random_delay_options{};
-  auto rd_base_day = std::string{};
+  auto rd_date = std::string{};
 
   auto desc = po::options_description{"Options"};
   desc.add_options()  //
@@ -164,15 +164,13 @@ int batch(int ac, char** av) {
        "random delays: probability that a transport is cancelled")  //
       ("rd_max_delay", po::value(&rd.max_delay_)->default_value(rd.max_delay_),
        "random delays: maximum delay in minutes")  //
-      ("rd_base_day", po::value(&rd_base_day),
-       "random delays: base day of the rt timetable, format: YYYY-MM-DD "
-       "(default: first day of the timetable, i.e. the same day `motis "
-       "generate` starts its default query window at)")  //
-      ("rd_first_day", po::value(&rd.first_day_)->default_value(rd.first_day_),
-       "random delays: first day to generate rt data for, relative to the "
-       "base day")  //
-      ("rd_n_days", po::value(&rd.n_days_)->default_value(rd.n_days_),
-       "random delays: number of days to generate rt data for");
+      ("rd_date", po::value(&rd_date),
+       "random delays: the day to generate rt data for, format: YYYY-MM-DD. "
+       "Data is generated for this day and the following one (a real-time "
+       "feed normally only covers what is currently running, plus enough of "
+       "tomorrow for journeys travelling overnight), so all queries should "
+       "ask for this day. Default: first day of the timetable, i.e. the same "
+       "day `motis generate` starts its default query window at.");
   add_data_path_opt(desc, data_path);
 
   auto vm = parse_opt(ac, av, desc);
@@ -203,13 +201,13 @@ int batch(int ac, char** av) {
     apply_canned_rt_update(c, d);
   }
   if (random_delays) {
-    if (!rd_base_day.empty()) {
-      auto in = std::istringstream{rd_base_day};
-      auto base_day = date::sys_days{};
-      in >> date::parse("%F", base_day);
-      utl::verify(!in.fail(), "invalid rd_base_day {}, format: YYYY-MM-DD",
-                  rd_base_day);
-      rd.base_day_ = base_day;
+    if (!rd_date.empty()) {
+      auto in = std::istringstream{rd_date};
+      auto date = date::sys_days{};
+      in >> date::parse("%F", date);
+      utl::verify(!in.fail(), "invalid rd_date {}, format: YYYY-MM-DD",
+                  rd_date);
+      rd.date_ = date;
     }
     apply_random_delays_rt_update(d, rd);
   }

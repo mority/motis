@@ -70,11 +70,15 @@ void generate_random_delays(n::timetable const& tt,
   auto const base_day =
       static_cast<int>((rtt.base_day_ - tt_days.from_).count());
 
+  // `date_` and the day after it: a real-time feed normally only covers what
+  // is currently running, plus enough of tomorrow for journeys that travel
+  // overnight. `rtt.base_day_` is `date_`, so this is [base_day, base_day + 2).
+  //
   // Real-time event times are stored as `delta_t` (int16 minutes relative to
   // the base day), so days too far away from the base day can not be
-  // represented.
-  auto const requested_first = base_day + opt.first_day_;
-  auto const requested_last = requested_first + static_cast<int>(opt.n_days_);
+  // represented -- not a concern at two days, but kept as a guard.
+  auto const requested_first = base_day;
+  auto const requested_last = requested_first + kRandomDelayDays;
   auto const first_day =
       std::clamp(requested_first, std::max(0, base_day - kMaxDayOffset),
                  std::max(0, base_day + kMaxDayOffset));
@@ -88,8 +92,7 @@ void generate_random_delays(n::timetable const& tt,
   if (first_day != requested_first || last_day != requested_last) {
     n::log(n::log_lvl::info, "motis.rt",
            "random delays: requested days [{}, {}) truncated to [{}, {}) "
-           "(timetable date range + days representable relative to the base "
-           "day)",
+           "(timetable date range)",
            to_date(requested_first), to_date(requested_last),
            to_date(first_day), to_date(last_day));
   }
@@ -159,7 +162,7 @@ void generate_random_delays(n::timetable const& tt,
   }
 
   n::log(n::log_lvl::info, "motis.rt",
-         "random delays: seed={}, base_day={}, days=[{}, {}), {} delayed, {} "
+         "random delays: seed={}, date={}, days=[{}, {}), {} delayed, {} "
          "cancelled transports",
          opt.seed_, date::format("%F", rtt.base_day_), to_date(first_day),
          to_date(last_day), n_delayed, n_cancelled);

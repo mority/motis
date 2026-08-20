@@ -117,17 +117,20 @@ TEST(rt, random_delays_probabilities) {
   auto const no_rt = generate(tt, {.delay_probability_ = 0.0});
   EXPECT_EQ(0U, no_rt.n_rt_transports());
 
-  auto const all_delayed =
-      generate(tt, {.delay_probability_ = 1.0, .n_days_ = 1U});
-  EXPECT_EQ(tt.transport_route_.size(), all_delayed.n_rt_transports());
+  // The generator covers motis::kRandomDelayDays days: kBaseDay and the day after.
+  auto const all_delayed = generate(tt, {.delay_probability_ = 1.0});
+  EXPECT_EQ(tt.transport_route_.size() * motis::kRandomDelayDays,
+            all_delayed.n_rt_transports());
 
-  auto const all_cancelled =
-      generate(tt, {.cancel_probability_ = 1.0, .n_days_ = 1U});
+  auto const all_cancelled = generate(tt, {.cancel_probability_ = 1.0});
   EXPECT_EQ(0U, all_cancelled.n_rt_transports());
   for (auto t = n::transport_idx_t{0U}; t != tt.transport_route_.size(); ++t) {
-    EXPECT_FALSE(all_cancelled.is_transport_active(
+    // The day before kBaseDay is not covered any more, the day after is.
+    EXPECT_TRUE(all_cancelled.is_transport_active(
         t, tt.day_idx(kBaseDay - date::days{1})));
-    EXPECT_TRUE(all_cancelled.is_transport_active(t, tt.day_idx(kBaseDay)));
+    EXPECT_FALSE(all_cancelled.is_transport_active(t, tt.day_idx(kBaseDay)));
+    EXPECT_FALSE(all_cancelled.is_transport_active(
+        t, tt.day_idx(kBaseDay + date::days{1})));
   }
 }
 
@@ -140,11 +143,10 @@ TEST(rt, random_delays_day_range) {
   generate_random_delays(tt, far_away, {.delay_probability_ = 1.0});
   EXPECT_EQ(0U, far_away.n_rt_transports());
 
-  // Days that can not be represented as `delta_t` relative to the base day
-  // are not generated.
+  // All generated times are representable as `delta_t` relative to the base
+  // day.
   auto clamped = n::rt::create_rt_timetable(tt, kBaseDay);
-  generate_random_delays(tt, clamped,
-                         {.delay_probability_ = 1.0, .n_days_ = 100U});
+  generate_random_delays(tt, clamped, {.delay_probability_ = 1.0});
   for (auto rt_t = n::rt_transport_idx_t{0U}; rt_t != clamped.n_rt_transports();
        ++rt_t) {
     for (auto const t : clamped.rt_transport_stop_times_[rt_t]) {

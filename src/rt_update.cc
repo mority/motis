@@ -382,7 +382,7 @@ void apply_random_delays_rt_update(data& d, random_delay_options const& opt) {
   // Default: first day of the timetable. This is where `motis generate`
   // starts its default query window, which is what this is generated for.
   auto rtt = create_empty_rt_timetable(
-      d, opt.base_day_.value_or(d.tt_->date_range_.from_));
+      d, opt.date_.value_or(d.tt_->date_range_.from_));
   generate_random_delays(*d.tt_, *rtt, opt);
   publish_rt_timetable(d, std::move(rtt));
 }
