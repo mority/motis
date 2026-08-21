@@ -97,7 +97,7 @@ void generate_random_delays(n::timetable const& tt,
            to_date(first_day), to_date(last_day));
   }
 
-  auto n_delayed = 0U, n_cancelled = 0U;
+  auto n_covered = 0U, n_delayed = 0U, n_cancelled = 0U;
   auto const n_transports = n::transport_idx_t{
       static_cast<n::transport_idx_t::value_t>(tt.transport_route_.size())};
   for (auto t = n::transport_idx_t{0U}; t != n_transports; ++t) {
@@ -124,23 +124,33 @@ void generate_random_delays(n::timetable const& tt,
         continue;
       }
 
-      if (gen.next_double() >= opt.delay_probability_) {
-        continue;
+      if (gen.next_double() >= opt.coverage_) {
+        continue;  // not in the feed at all -> stays a purely static transport
       }
+
+      // Covered by the feed. Drawn before the delay magnitude so that which
+      // transports are covered does not depend on `lateness_`.
+      auto const is_late = gen.next_double() < opt.lateness_;
 
       // Skewed towards small delays: most delayed transports are only a few
       // minutes late, large delays are rare.
       auto const u = gen.next_double();
-      auto delay = static_cast<int>(
-          std::lround(static_cast<double>(opt.max_delay_) * u * u * u));
+      auto delay = is_late ? static_cast<int>(std::lround(
+                                 static_cast<double>(opt.max_delay_) * u * u *
+                                 u))
+                           : 0;
 
+      // An on-time transport still gets an rt_transport -- that is what a real
+      // feed reports, and it moves the transport onto the real-time scan.
       r.rt_ = rtt.add_rt_transport(src, tt, r.t_);
 
       auto pred_time = n::unixtime_t::min();
       auto const update = [&](n::stop_idx_t const stop_idx,
                               n::event_type const ev_type) {
-        delay = std::clamp(delay + gen.next_int(-3, 3), 0,
-                           static_cast<int>(opt.max_delay_));
+        if (is_late) {
+          delay = std::clamp(delay + gen.next_int(-3, 3), 0,
+                             static_cast<int>(opt.max_delay_));
+        }
         auto const new_time =
             std::max(pred_time,
                      tt.event_time(r.t_, stop_idx, ev_type) +
@@ -157,15 +167,18 @@ void generate_random_delays(n::timetable const& tt,
           update(stop_idx, n::event_type::kDep);
         }
       }
-      ++n_delayed;
+      ++n_covered;
+      if (is_late) {
+        ++n_delayed;
+      }
     }
   }
 
   n::log(n::log_lvl::info, "motis.rt",
-         "random delays: seed={}, date={}, days=[{}, {}), {} delayed, {} "
-         "cancelled transports",
+         "random delays: seed={}, date={}, days=[{}, {}), {} covered ({} of "
+         "them delayed), {} cancelled transports",
          opt.seed_, date::format("%F", rtt.base_day_), to_date(first_day),
-         to_date(last_day), n_delayed, n_cancelled);
+         to_date(last_day), n_covered, n_delayed, n_cancelled);
 }
 
 }  // namespace motis

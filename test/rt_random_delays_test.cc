@@ -100,7 +100,8 @@ n::rt_timetable generate(n::timetable const& tt,
 TEST(rt, random_delays_deterministic) {
   auto const tt = load_tt();
   auto const opt = random_delay_options{.seed_ = 42U,
-                                        .delay_probability_ = 0.5,
+                                        .coverage_ = 1.0,
+                                        .lateness_ = 0.5,
                                         .cancel_probability_ = 0.1,
                                         .max_delay_ = 30U};
 
@@ -114,11 +115,12 @@ TEST(rt, random_delays_deterministic) {
 TEST(rt, random_delays_probabilities) {
   auto const tt = load_tt();
 
-  auto const no_rt = generate(tt, {.delay_probability_ = 0.0});
+  auto const no_rt = generate(tt, {.coverage_ = 0.0});
   EXPECT_EQ(0U, no_rt.n_rt_transports());
 
   // The generator covers motis::kRandomDelayDays days: kBaseDay and the day after.
-  auto const all_delayed = generate(tt, {.delay_probability_ = 1.0});
+  auto const all_delayed =
+      generate(tt, {.coverage_ = 1.0, .lateness_ = 1.0});
   EXPECT_EQ(tt.transport_route_.size() * motis::kRandomDelayDays,
             all_delayed.n_rt_transports());
 
@@ -134,19 +136,58 @@ TEST(rt, random_delays_probabilities) {
   }
 }
 
+// A feed covers the day's service and reports most of it as punctual: those
+// transports must still show up as rt_transports (which is what moves them off
+// the static scan), just without any deviation from the schedule.
+TEST(rt, random_delays_coverage_without_lateness) {
+  auto const tt = load_tt();
+
+  auto const rtt = generate(tt, {.coverage_ = 1.0, .lateness_ = 0.0});
+  EXPECT_EQ(tt.transport_route_.size() * motis::kRandomDelayDays,
+            rtt.n_rt_transports());
+
+  for (auto rt_t = n::rt_transport_idx_t{0U}; rt_t != rtt.n_rt_transports();
+       ++rt_t) {
+    auto const t = rtt.resolve_static(rt_t);
+    auto const n_stops =
+        static_cast<n::stop_idx_t>(rtt.rt_transport_location_seq_[rt_t].size());
+
+    // Covered, so it moved off the static scan ...
+    EXPECT_FALSE(rtt.is_transport_active(t.t_idx_, t.day_));
+
+    // ... but every time is exactly the scheduled one.
+    for (auto stop_idx = n::stop_idx_t{0U}; stop_idx != n_stops; ++stop_idx) {
+      for (auto const ev_type : {n::event_type::kArr, n::event_type::kDep}) {
+        if ((ev_type == n::event_type::kArr && stop_idx == 0U) ||
+            (ev_type == n::event_type::kDep && stop_idx == n_stops - 1U)) {
+          continue;
+        }
+        EXPECT_EQ(tt.event_time(t, stop_idx, ev_type),
+                  rtt.unix_event_time(rt_t, stop_idx, ev_type));
+      }
+    }
+  }
+
+  // coverage_ = 0 means the feed knows nothing at all
+  EXPECT_EQ(0U, generate(tt, {.coverage_ = 0.0, .lateness_ = 1.0})
+                    .n_rt_transports());
+}
+
 TEST(rt, random_delays_day_range) {
   auto const tt = load_tt();
 
   // Base day outside of the timetable date range: nothing to generate.
   auto far_away =
       n::rt::create_rt_timetable(tt, date::sys_days{2020_y / May / 1});
-  generate_random_delays(tt, far_away, {.delay_probability_ = 1.0});
+  generate_random_delays(tt, far_away,
+                         {.coverage_ = 1.0, .lateness_ = 1.0});
   EXPECT_EQ(0U, far_away.n_rt_transports());
 
   // All generated times are representable as `delta_t` relative to the base
   // day.
   auto clamped = n::rt::create_rt_timetable(tt, kBaseDay);
-  generate_random_delays(tt, clamped, {.delay_probability_ = 1.0});
+  generate_random_delays(tt, clamped,
+                         {.coverage_ = 1.0, .lateness_ = 1.0});
   for (auto rt_t = n::rt_transport_idx_t{0U}; rt_t != clamped.n_rt_transports();
        ++rt_t) {
     for (auto const t : clamped.rt_transport_stop_times_[rt_t]) {
@@ -159,7 +200,7 @@ TEST(rt, random_delays_day_range) {
 TEST(rt, random_delays_valid_times) {
   auto const tt = load_tt();
   auto const opt = random_delay_options{
-      .seed_ = 7U, .delay_probability_ = 1.0, .max_delay_ = 30U};
+      .seed_ = 7U, .coverage_ = 1.0, .lateness_ = 1.0, .max_delay_ = 30U};
   auto const rtt = generate(tt, opt);
 
   EXPECT_NE(0U, rtt.n_rt_transports());

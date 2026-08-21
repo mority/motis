@@ -16,8 +16,18 @@ struct random_delay_options {
   // timetable.
   std::uint64_t seed_{0U};
 
-  // Probability that a transport is delayed [0, 1].
-  double delay_probability_{0.5};
+  // Probability that a transport appears in the real-time feed at all [0, 1].
+  // A real feed normally covers (close to) all of the day's service, and says
+  // about most of it that it is on time - so a covered transport still gets an
+  // `rt_transport`, just without any deviation from its schedule. That matters
+  // beyond statistics: materialising an `rt_transport` clears the day in
+  // `rtt.transport_traffic_days_`, moving the transport off the static scan
+  // onto the real-time one.
+  double coverage_{1.0};
+
+  // Probability that a *covered* transport is actually late [0, 1].
+  // coverage_ * lateness_ is the share of all transports that are delayed.
+  double lateness_{0.2};
 
   // Probability that a transport is cancelled [0, 1]. Checked before
   // `delay_probability_`, i.e. cancelled transports are never delayed.

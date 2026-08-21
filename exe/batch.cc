@@ -155,9 +155,16 @@ int batch(int ac, char** av) {
        "generate random delays before running the queries: deterministic, "
        "i.e. same binary + same timetable + same options = same rt "
        "timetable")  //
-      ("rd_p_delay",
-       po::value(&rd.delay_probability_)->default_value(rd.delay_probability_),
-       "random delays: probability that a transport is delayed")  //
+      ("rd_coverage",
+       po::value(&rd.coverage_)->default_value(rd.coverage_),
+       "random delays: probability that a transport appears in the rt feed at "
+       "all. A real feed covers close to all of the day's service and reports "
+       "most of it as on time, so a covered transport gets an rt_transport "
+       "even when it is punctual")  //
+      ("rd_lateness", po::value(&rd.lateness_)->default_value(rd.lateness_),
+       "random delays: probability that a *covered* transport is actually "
+       "late; rd_coverage * rd_lateness is the share of all transports that "
+       "are delayed")  //
       ("rd_p_cancel",
        po::value(&rd.cancel_probability_)
            ->default_value(rd.cancel_probability_),
