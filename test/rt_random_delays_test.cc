@@ -137,8 +137,10 @@ TEST(rt, random_delays_probabilities) {
 }
 
 // A feed covers the day's service and reports most of it as punctual: those
-// transports must still show up as rt_transports (which is what moves them off
-// the static scan), just without any deviation from the schedule.
+// transports must still show up as rt_transports, just without any deviation
+// from the schedule. Because they deviate in nothing, they stay on the static
+// scan -- rt_timetable::finalize_rt_transport() puts the traffic day back and
+// flags them, so both the scheduled and the real-time search ride them there.
 TEST(rt, random_delays_coverage_without_lateness) {
   auto const tt = load_tt();
 
@@ -152,10 +154,11 @@ TEST(rt, random_delays_coverage_without_lateness) {
     auto const n_stops =
         static_cast<n::stop_idx_t>(rtt.rt_transport_location_seq_[rt_t].size());
 
-    // Covered, so it moved off the static scan ...
-    EXPECT_FALSE(rtt.is_transport_active(t.t_idx_, t.day_));
+    // Covered but punctual, so it stays on the static scan ...
+    EXPECT_TRUE(rtt.is_unchanged(rt_t));
+    EXPECT_TRUE(rtt.is_transport_active(t.t_idx_, t.day_));
 
-    // ... but every time is exactly the scheduled one.
+    // ... and every time is exactly the scheduled one.
     for (auto stop_idx = n::stop_idx_t{0U}; stop_idx != n_stops; ++stop_idx) {
       for (auto const ev_type : {n::event_type::kArr, n::event_type::kDep}) {
         if ((ev_type == n::event_type::kArr && stop_idx == 0U) ||
@@ -210,8 +213,12 @@ TEST(rt, random_delays_valid_times) {
     auto const n_stops =
         static_cast<n::stop_idx_t>(rtt.rt_transport_location_seq_[rt_t].size());
 
-    // The static transport is not active on this day anymore.
-    EXPECT_FALSE(rtt.is_transport_active(t.t_idx_, t.day_));
+    // A covered transport is on the static scan exactly while it deviates in
+    // nothing. Stated as the equivalence rather than as EXPECT_FALSE because
+    // the delay is drawn from a distribution skewed towards small values, so
+    // even at lateness_ = 1.0 a transport can come out exactly on time.
+    EXPECT_EQ(rtt.is_unchanged(rt_t),
+              rtt.is_transport_active(t.t_idx_, t.day_));
 
     auto pred = n::unixtime_t::min();
     for (auto stop_idx = n::stop_idx_t{0U}; stop_idx != n_stops; ++stop_idx) {
