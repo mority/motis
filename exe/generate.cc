@@ -123,10 +123,10 @@ std::pair<date::sys_days, std::uint64_t> busiest_window(
   // only days the timetable actually offers as query dates
   auto const lo = static_cast<std::size_t>(
       std::max(0, static_cast<int>((tt.date_range_.from_ - from).count())));
-  auto const hi = std::min(
-      per_day.size(),
-      static_cast<std::size_t>(std::max(
-          0, static_cast<int>((tt.date_range_.to_ - from).count()))));
+  auto const hi =
+      std::min(per_day.size(),
+               static_cast<std::size_t>(std::max(
+                   0, static_cast<int>((tt.date_range_.to_ - from).count()))));
   if (lo >= hi) {
     return {tt.date_range_.from_, 0U};
   }
@@ -522,7 +522,8 @@ int generate(int ac, char** av) {
         if (lb_rank && rank_stop != n::location_idx_t::invalid()) {
           auto const search = n::routing::search<
               n::direction::kBackward,
-              n::routing::raptor<n::direction::kBackward, n::routing::rt_mode::off, 0,
+              n::routing::raptor<n::direction::kBackward,
+                                 n::routing::rt_mode::off, 0,
                                  n::routing::search_mode::kOneToAll>>{
               *d.tt_, nullptr, s.ss_, s.rs_,
               nigiri::routing::query{
