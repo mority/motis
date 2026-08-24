@@ -77,6 +77,79 @@ n::location_idx_t random_stop(n::timetable const& tt,
   return s;
 }
 
+namespace {
+
+// Active transports per day of the timetable. Transports share traffic-day
+// bitfields, so this counts uses per bitfield and expands once per distinct
+// bitfield -- n_transports + n_bitfields * n_days instead of their product.
+std::vector<std::uint64_t> active_transports_per_day(n::timetable const& tt) {
+  auto const days = tt.internal_interval_days();
+  auto const n_days = static_cast<std::size_t>((days.to_ - days.from_).count());
+
+  auto uses = std::vector<std::uint64_t>(tt.bitfields_.size(), 0U);
+  for (auto t = n::transport_idx_t{0U}; t != tt.transport_traffic_days_.size();
+       ++t) {
+    ++uses[cista::to_idx(tt.transport_traffic_days_[t])];
+  }
+
+  auto per_day = std::vector<std::uint64_t>(n_days, 0U);
+  for (auto b = std::size_t{0U}; b != uses.size(); ++b) {
+    if (uses[b] == 0U) {
+      continue;
+    }
+    auto const& bf = tt.bitfields_[n::bitfield_idx_t{b}];
+    for (auto d = std::size_t{0U}; d != n_days; ++d) {
+      if (bf.test(d)) {
+        per_day[d] += uses[b];
+      }
+    }
+  }
+  return per_day;
+}
+
+// The window of `n_window_days` consecutive days carrying the most service.
+//
+// A timetable's edges are sparse: feeds whose validity begins or ends inside
+// the range only contribute to part of it, and merged datasets are ragged.
+// Starting at the first day -- the previous default -- can therefore generate
+// queries against a fraction of the service, most of which turn out
+// unroutable. On a planet-wide dataset the first day carried half the
+// transports of the best one.
+std::pair<date::sys_days, std::uint64_t> busiest_window(
+    n::timetable const& tt, unsigned const n_window_days) {
+  auto const per_day = active_transports_per_day(tt);
+  auto const from = tt.internal_interval_days().from_;
+
+  // only days the timetable actually offers as query dates
+  auto const lo = static_cast<std::size_t>(
+      std::max(0, static_cast<int>((tt.date_range_.from_ - from).count())));
+  auto const hi = std::min(
+      per_day.size(),
+      static_cast<std::size_t>(std::max(
+          0, static_cast<int>((tt.date_range_.to_ - from).count()))));
+  if (lo >= hi) {
+    return {tt.date_range_.from_, 0U};
+  }
+
+  auto const w = std::min(static_cast<std::size_t>(n_window_days), hi - lo);
+  auto sum = std::uint64_t{0U};
+  for (auto i = lo; i != lo + w; ++i) {
+    sum += per_day[i];
+  }
+  auto best_sum = sum;
+  auto best_start = lo;
+  for (auto i = lo + w; i != hi; ++i) {
+    sum += per_day[i] - per_day[i - w];
+    if (sum > best_sum) {
+      best_sum = sum;
+      best_start = i - w + 1U;
+    }
+  }
+  return {from + date::days{static_cast<int>(best_start)}, best_sum};
+}
+
+}  // namespace
+
 int generate(int ac, char** av) {
   auto data_path = fs::path{"data"};
   auto n = 100U;
@@ -218,6 +291,17 @@ int generate(int ac, char** av) {
 
   fmt::println("Timetable ---\nn_locations: {}\nn_routes: {}\nn_trips: {}\n---",
                d.tt_->n_locations(), d.tt_->n_routes(), d.tt_->n_trips());
+
+  if (!first_day && !last_day) {
+    auto const [start, n_active] = busiest_window(*d.tt_, 14U);
+    first_day = start;
+    last_day = d.tt_->date_range_.clamp(start + date::days{14U});
+    fmt::println(
+        "no date range given: using the busiest 14-day window [{}, {}), "
+        "{} active transports",
+        date::format("%F", *first_day), date::format("%F", *last_day),
+        n_active);
+  }
 
   first_day = first_day
                   ? d.tt_->date_range_.clamp(*first_day)
