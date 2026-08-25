@@ -167,9 +167,6 @@ void generate_random_delays(n::timetable const& tt,
           update(stop_idx, n::event_type::kDep);
         }
       }
-      // Same hook the GTFS-RT and VDV update paths use: a covered but
-      // punctual trip stays on the static scan.
-      rtt.finalize_rt_transport(tt, r.rt_);
 
       ++n_covered;
       if (is_late) {

@@ -37,7 +37,7 @@
 [nigiri]
   url=git@github.com:mority/nigiri.git
   branch=rt-raptor
-  commit=e644088547ee05d0e98956a057da6efeb5ad27d7
+  commit=cf71769ca1adcf78679ddc39c297ae45a7645e0b
 [openapi-cpp]
   url=git@github.com:triptix-tech/openapi-cpp.git
   branch=master

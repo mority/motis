@@ -138,9 +138,10 @@ TEST(rt, random_delays_probabilities) {
 
 // A feed covers the day's service and reports most of it as punctual: those
 // transports must still show up as rt_transports, just without any deviation
-// from the schedule. Because they deviate in nothing, they stay on the static
-// scan -- rt_timetable::finalize_rt_transport() puts the traffic day back and
-// flags them, so both the scheduled and the real-time search ride them there.
+// from the schedule. Being covered is what decides the scan, not whether the
+// times moved: add_rt_transport() takes the day off the static traffic days,
+// so a punctual transport is scanned as an rt transport like a delayed one,
+// only with the scheduled times.
 TEST(rt, random_delays_coverage_without_lateness) {
   auto const tt = load_tt();
 
@@ -154,9 +155,8 @@ TEST(rt, random_delays_coverage_without_lateness) {
     auto const n_stops =
         static_cast<n::stop_idx_t>(rtt.rt_transport_location_seq_[rt_t].size());
 
-    // Covered but punctual, so it stays on the static scan ...
-    EXPECT_TRUE(rtt.is_unchanged(rt_t));
-    EXPECT_TRUE(rtt.is_transport_active(t.t_idx_, t.day_));
+    // Covered, so it is off the static scan even though it is punctual ...
+    EXPECT_FALSE(rtt.is_transport_active(t.t_idx_, t.day_));
 
     // ... and every time is exactly the scheduled one.
     for (auto stop_idx = n::stop_idx_t{0U}; stop_idx != n_stops; ++stop_idx) {
@@ -213,12 +213,11 @@ TEST(rt, random_delays_valid_times) {
     auto const n_stops =
         static_cast<n::stop_idx_t>(rtt.rt_transport_location_seq_[rt_t].size());
 
-    // A covered transport is on the static scan exactly while it deviates in
-    // nothing. Stated as the equivalence rather than as EXPECT_FALSE because
-    // the delay is drawn from a distribution skewed towards small values, so
-    // even at lateness_ = 1.0 a transport can come out exactly on time.
-    EXPECT_EQ(rtt.is_unchanged(rt_t),
-              rtt.is_transport_active(t.t_idx_, t.day_));
+    // Every covered transport is off the static scan, whether or not it ended
+    // up deviating -- the delay is drawn from a distribution skewed towards
+    // small values, so even at lateness_ = 1.0 one can come out exactly on
+    // time, and it is still scanned as an rt transport.
+    EXPECT_FALSE(rtt.is_transport_active(t.t_idx_, t.day_));
 
     auto pred = n::unixtime_t::min();
     for (auto stop_idx = n::stop_idx_t{0U}; stop_idx != n_stops; ++stop_idx) {
