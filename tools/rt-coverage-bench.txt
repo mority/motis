@@ -1,0 +1,331 @@
+================================================================================
+ A/B BENCHMARK: nigiri "drop rt_timetable if not needed" (rt-coverage branch)
+================================================================================
+
+WHAT THIS MEASURES
+------------------
+nigiri branch `rt-coverage` adds a check in `raptor_search_with_dir()` that
+drops the `rt_timetable` pointer when the real-time coverage interval cannot
+overlap the query's reachable time window. When it fires, the search falls into
+the existing `Rt = false` raptor instantiation and skips all real-time lookups.
+
+Two scenarios, each run with nigiri master and with nigiri rt-coverage:
+
+  A  queries on the same date the random delays are generated for
+     -> the check must NOT fire; results and search counters must be identical
+        to master. This is the regression check.
+
+  B  same origin/destination pairs, queries a month after the delay date
+     -> the check MUST fire; results must still be identical to master, and
+        the search work should drop sharply.
+
+Expected outcome: `motis compare` reports "equal" for every query in both
+scenarios. In A every search counter matches master exactly. In B the counters
+drop (with a 10-query pilot on Germany: n_routes_visited 9.3x lower,
+execute_time 4.5x lower).
+
+
+--------------------------------------------------------------------------------
+0. PREREQUISITES
+--------------------------------------------------------------------------------
+- An imported motis data directory (`motis import`), i.e. a directory with
+  `config.yml`, `tt.bin`, ... The pilot used a Germany GTFS import with
+  timetable.first_day = 2026-08-20, num_days = 365.
+- SSH access to github.com (the `.pkg` nigiri url is an SSH url).
+- ~2 GB free disk for the response files (4 x ~400 MB at 1000 queries).
+- Roughly 16 CPU threads; the pilot machine had 16.
+
+Set these once:
+
+  export MOTIS=$HOME/code/motis                 # motis checkout
+  export DATA=$MOTIS/cmake-build-release-gcc-13/data   # imported data dir
+  export BUILD=$MOTIS/cmake-build-release-gcc-13       # cmake build dir
+  export WORK=$HOME/rt-coverage-bench           # scratch dir for this benchmark
+  mkdir -p "$WORK"
+
+
+--------------------------------------------------------------------------------
+1. WHY THE MOTIS BASE IS NOT HEAD  (read this before "fixing" the build)
+--------------------------------------------------------------------------------
+motis cannot be built against nigiri master at any commit that carries the
+random-delay tooling. `src/endpoints/routing.cc` uses `query::rt_mode_both_`
+and the 6-argument scheduled-slot `raptor_search`, and `exe/generate.cc` uses
+`n::routing::rt_mode::off` -- all of which exist only on the nigiri `rt-raptor`
+branch, not on master and not on rt-coverage. This is true of motis HEAD and of
+the whole rt-raptor line, including b02982a, which pins nigiri master in `.pkg`
+but does not actually compile against it.
+
+So the benchmark base is:
+
+    motis ed0360f  ("fix one-to-many off-by-one crash", newest ancestor with
+                    zero rt-raptor API use, pins nigiri master)
+  + the six random-delay files taken verbatim from motis c473955
+    (none of them reference rt_mode, so this is the same tooling as on HEAD)
+
+If you would rather benchmark on motis HEAD, the alternative is to rebase the
+two nigiri coverage commits onto nigiri `rt-raptor` and compare
+rt-raptor vs rt-raptor+coverage instead. That changes the baseline.
+
+
+--------------------------------------------------------------------------------
+2. BUILD THE MOTIS BASE BRANCH
+--------------------------------------------------------------------------------
+The branch is already prepared and pushed:
+
+  cd "$MOTIS"
+  git fetch origin bench
+  git checkout bench          # or: git checkout -b bench origin/bench
+
+To rebuild it from scratch instead (e.g. on a different motis remote):
+
+  git checkout -b bench ed0360f
+  git checkout c473955 -- \
+      src/rt_random_delays.cc \
+      include/motis/rt_random_delays.h \
+      include/motis/rt_update.h \
+      src/rt_update.cc \
+      exe/batch.cc \
+      test/rt_random_delays_test.cc
+
+
+--------------------------------------------------------------------------------
+3. BUILD BOTH BINARIES
+--------------------------------------------------------------------------------
+The two nigiri commits differ by exactly the two coverage commits:
+
+  master      a614f55041cab1622187fa942787106e9e941540   "GPU speedup (~10%) (#400)"
+  rt-coverage 1b35d5e7a542b8cd69adab4ab2a5a67567f4440e   "drop rt_timetable pointer if not needed"
+
+Both are on git@github.com:mority/nigiri.git.
+
+`cmake .` runs `pkg -l`, which re-checks out `deps/nigiri` from `.pkg`. Copy the
+binary out after each build -- the next build overwrites `$BUILD/motis`.
+
+The [nigiri] block is flipped with the helper committed next to this file.
+(Do not use a plain `sed 's/branch=master/.../'` on .pkg -- most of the other
+deps are on `branch=master` too and would be rewritten as well.)
+
+  # --- variant 1: nigiri master ---
+  python3 "$MOTIS/tools/rt-coverage-bench-set-nigiri.py" master a614f55041cab1622187fa942787106e9e941540
+  cd "$BUILD" && cmake . && cmake --build . --target motis -j "$(nproc)"
+  cp "$BUILD/motis" "$WORK/motis-nigiri-master"
+
+  # --- variant 2: nigiri rt-coverage ---
+  python3 "$MOTIS/tools/rt-coverage-bench-set-nigiri.py" rt-coverage 1b35d5e7a542b8cd69adab4ab2a5a67567f4440e
+  cd "$BUILD" && cmake . && cmake --build . --target motis -j "$(nproc)"
+  cp "$BUILD/motis" "$WORK/motis-nigiri-rt-coverage"
+
+Sanity check before continuing:
+
+  cd "$MOTIS/deps/nigiri" && git log --oneline -1     # must be 1b35d5e7
+  ls -la "$WORK"/motis-nigiri-*                       # two distinct binaries
+
+The first build is a full motis build (~20 min cold). The second only rebuilds
+nigiri + relinks (~2 min) because buildcache reuses the rest.
+
+
+--------------------------------------------------------------------------------
+4. PICK THE DATES
+--------------------------------------------------------------------------------
+  export DELAY_DATE=2026-09-01     # queries in scenario A, and the rt feed day
+  export FAR_DATE=2026-10-01       # queries in scenario B
+
+Constraints:
+- Both must be inside the timetable's date range (see `timetable.first_day` /
+  `num_days` in $DATA/config.yml).
+- `--random_delays` generates data for DELAY_DATE *and the following day*, so
+  coverage spans [DELAY_DATE, DELAY_DATE+2d).
+- For scenario B the check only fires if the query's reachable window misses
+  that. The window is [FAR_DATE-2d, FAR_DATE+2d+max_travel_time], and
+  max_travel_time defaults to 5 days -- so FAR_DATE must be at least ~4 days
+  after DELAY_DATE+2d. A month apart is comfortable.
+
+
+--------------------------------------------------------------------------------
+5. GENERATE THE QUERIES  (do this ONCE -- both variants must see the same file)
+--------------------------------------------------------------------------------
+`motis generate` always writes `queries.txt` into the *current* directory.
+`--lb_rank false` is the "uniformly at random" origin/destination mode.
+Scenario B is derived from A by rewriting only the date, so the OD pairs are
+identical and the date is the only variable.
+
+  cd "$WORK"
+  "$WORK/motis-nigiri-master" generate \
+      -d "$DATA" \
+      -n 1000 \
+      --first_day "$DELAY_DATE" \
+      --last_day  "$(date -u -d "$DELAY_DATE + 1 day" +%F)" \
+      --lb_rank false
+
+  # force the RAPTOR algorithm (default is PONG, which does not go through
+  # raptor_search_with_dir where the check lives)
+  "$WORK/motis-nigiri-master" params -p "?algorithm=RAPTOR" \
+      -i queries.txt -o queries_A.txt
+
+  sed "s/time=${DELAY_DATE}T/time=${FAR_DATE}T/" queries_A.txt > queries_B.txt
+
+Verify:
+
+  wc -l queries_A.txt queries_B.txt                       # 1000 each
+  grep -o 'time=[0-9-]*' queries_A.txt | sort -u          # only $DELAY_DATE
+  grep -o 'time=[0-9-]*' queries_B.txt | sort -u          # only $FAR_DATE
+  grep -c 'algorithm=RAPTOR' queries_A.txt                # 1000
+  diff <(sed 's/&time=[^&]*//' queries_A.txt) \
+       <(sed 's/&time=[^&]*//' queries_B.txt) && echo "OD pairs identical"
+
+NOTE: `motis generate` uses a global atomic counter as its RNG seed and runs
+multi-threaded, so two generate runs are not guaranteed to produce the same
+queries. That is why the set is generated once and reused for all four runs.
+
+`--last_day` is set to DELAY_DATE+1 on purpose: generate does
+`last_day = max(first_day + 1d, last_day)` and then picks a random day in
+[first_day, last_day), so every query lands on DELAY_DATE. The time of day is
+random in [06:00, 18:00).
+
+
+--------------------------------------------------------------------------------
+6. RUN THE FOUR BATCHES
+--------------------------------------------------------------------------------
+Note that `--rd_date` is $DELAY_DATE in ALL four runs -- the real-time feed is
+the same in every run; only the query date changes between A and B.
+
+  cd "$WORK"
+  for scen in A B; do
+    for v in master rt-coverage; do
+      echo "=== $scen / $v ==="
+      "$WORK/motis-nigiri-$v" batch \
+          -d "$DATA" \
+          -q "queries_$scen.txt" \
+          -r "resp_${scen}_${v}.txt" \
+          --random_delays --rd_date "$DELAY_DATE" \
+          > "batch_${scen}_${v}.log" 2>&1
+      echo "exit=$?"
+    done
+  done
+
+Each run loads the full dataset first (~1-2 min) and then runs the queries on
+all hardware threads. Rough pilot-scaled estimate for 1000 queries on Germany
+with 16 threads: A ~8 min per variant, B ~11 min (master) and ~3 min
+(rt-coverage). Total well under an hour.
+
+Confirm the feed is what you expect -- every log should contain a line like:
+
+  random delays: seed=0, date=2026-09-01, days=[2026-09-01, 2026-09-03),
+  1490389 covered (297086 of them delayed), 0 cancelled transports
+
+Add `-nt 1` to `batch` if you want less noisy per-query timings (much slower).
+
+
+--------------------------------------------------------------------------------
+7. COMPARE
+--------------------------------------------------------------------------------
+7a. Itinerary equality -- this is the correctness result.
+
+  cd "$WORK"
+  "$WORK/motis-nigiri-rt-coverage" compare \
+      -q queries_A.txt -r resp_A_master.txt resp_A_rt-coverage.txt
+  "$WORK/motis-nigiri-rt-coverage" compare \
+      -q queries_B.txt -r resp_B_master.txt resp_B_rt-coverage.txt
+
+Both must print "consumed: 1000 / equal: 1000".
+
+The response files are NOT byte-identical even when every itinerary matches --
+the `debugOutput` object carries the timing/counter differences. That is
+expected and is exactly what 7b reads.
+
+7b. Search-work counters.
+
+  python3 - <<'PY'
+import json, os
+work = os.environ["WORK"]
+def load(p):
+    with open(os.path.join(work, p)) as f:
+        return [json.loads(l) for l in f]
+metrics = ["execute_time", "n_routes_visited", "n_earliest_trip_calls",
+           "n_footpaths_visited", "lb_time"]
+for scen, title in [("A", "A: queries on the delay date (check must NOT fire)"),
+                    ("B", "B: queries a month later (check MUST fire)")]:
+    A = load(f"resp_{scen}_master.txt")
+    B = load(f"resp_{scen}_rt-coverage.txt")
+    print(f"\n{title}")
+    print(f"  {'metric':26} {'master':>16} {'rt-coverage':>16} {'ratio':>8}")
+    for m in metrics:
+        sa = sum(r.get("debugOutput", {}).get(m, 0) for r in A)
+        sb = sum(r.get("debugOutput", {}).get(m, 0) for r in B)
+        r = (sa / sb) if sb else float("nan")
+        print(f"  {m:26} {sa:>16,} {sb:>16,} {r:>7.2f}x")
+    same = sum(1 for x, y in zip(A, B)
+               if x.get("itineraries") == y.get("itineraries"))
+    ia = sum(len(r.get("itineraries", [])) for r in A)
+    ib = sum(len(r.get("itineraries", [])) for r in B)
+    print(f"  itineraries: master={ia}, rt-coverage={ib}; "
+          f"identical: {same}/{len(A)}")
+PY
+
+  # wall-clock summary per run
+  grep -H -E "Processed .* queries|      average:" batch_*.log
+
+
+--------------------------------------------------------------------------------
+8. HOW TO READ THE RESULT
+--------------------------------------------------------------------------------
+PASS looks like:
+
+  Scenario A: every counter ratio is 1.00x (bit-for-bit identical search work)
+              and compare says 1000/1000 equal.
+              -> the check correctly kept the rt_timetable everywhere.
+
+  Scenario B: compare says 1000/1000 equal, and n_routes_visited /
+              execute_time drop substantially.
+              -> the check fired and the results did not change.
+
+FAIL modes to watch for:
+
+  - A shows differing counters or unequal itineraries
+      => the check dropped the rtt when real-time data was relevant. Bug in
+         `needs_rt()` (window too narrow, or coverage_ not tracking something).
+  - B shows no counter drop
+      => the check never fired. Check that FAR_DATE is far enough (section 4)
+         and that queries really carry algorithm=RAPTOR.
+  - B shows unequal itineraries
+      => dropping the rtt changed results even though coverage was disjoint;
+         something outside `coverage_` influences the search (e.g. td footpaths
+         -- those are only guarded by `prf_idx_ == 0`).
+
+Reference numbers from the 10-query pilot on Germany (503,506 locations,
+2,362,679 trips, 16 threads), summed over 10 queries:
+
+  A  execute_time      73,119 ->      73,094   (1.00x)   compare 10/10 equal
+     n_routes_visited 325,114,937 -> 325,114,937 (1.00x)
+  B  execute_time     102,633 ->      22,849   (4.49x)   compare 10/10 equal
+     n_routes_visited 503,735,355 ->  54,166,846 (9.30x)
+
+The n_routes_visited collapse in B is the mechanism: real-time transports are
+not grouped into routes, so with Rt=true every marked location iterates all of
+its `location_rt_transports_` entries (~1.49M rt transports exist after the
+random-delay update) even though none can match a query a month away.
+
+
+--------------------------------------------------------------------------------
+9. CAVEATS
+--------------------------------------------------------------------------------
+- `--rd_coverage` defaults to 1.0, i.e. an rt_transport is materialised for
+  essentially the whole day's service. The B speedup scales with how much
+  real-time data the feed actually carries; a sparser feed shrinks it.
+- Scenario A is the scenario originally asked for, but it never exercises the
+  drop -- it only proves the branch does not regress the normal path. B is what
+  demonstrates the feature.
+- These are forward (departure-time) queries. `arriveBy=true` widens the
+  relevant window in the other direction; if you want that covered, add a third
+  query set with `params -p "?arriveBy=true"` and move FAR_DATE *before*
+  DELAY_DATE instead.
+- 1000 queries makes the counter ratios solid; wall-clock timings are still
+  affected by machine load since all runs share the box sequentially.
+
+
+--------------------------------------------------------------------------------
+10. CLEANUP / RESTORE
+--------------------------------------------------------------------------------
+  cd "$MOTIS"
+  git checkout .pkg .pkg.lock && git checkout <your-branch>
+  rm -rf "$WORK"

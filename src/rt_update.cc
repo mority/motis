@@ -29,6 +29,7 @@
 #include "motis/repeat.h"
 #include "motis/rt/auser.h"
 #include "motis/rt/rt_metrics.h"
+#include "motis/rt_random_delays.h"
 #include "motis/tag_lookup.h"
 
 namespace n = nigiri;
@@ -348,13 +349,19 @@ awaitable<void> update_rt(config const& c,
   d.metrics_->last_update_rt_.SetToCurrentTime();
 }
 
-void apply_canned_rt_update(config const& c, data& d) {
-  auto const endpoints = make_endpoints(c, d);
-  auto const today = std::chrono::time_point_cast<date::days>(
+static std::unique_ptr<n::rt_timetable> create_empty_rt_timetable(
+    data const& d, date::sys_days const base_day) {
+  return std::make_unique<n::rt_timetable>(
+      n::rt::create_rt_timetable(*d.tt_, base_day));
+}
+
+static date::sys_days today() {
+  return std::chrono::time_point_cast<date::days>(
       std::chrono::system_clock::now());
-  auto rtt = std::make_unique<n::rt_timetable>(
-      n::rt::create_rt_timetable(*d.tt_, today));
-  apply_canned(d, endpoints, *rtt);
+}
+
+static void publish_rt_timetable(data& d,
+                                 std::unique_ptr<n::rt_timetable>&& rtt) {
   rtt->update_lbs(*d.tt_);
   upload_gpu_rtt(d, *rtt);
 
@@ -362,6 +369,22 @@ void apply_canned_rt_update(config const& c, data& d) {
   auto new_rt = std::make_shared<rt>(std::move(rtt), std::move(d.rt_->e_),
                                      std::move(railviz_rt));
   std::atomic_store(&d.rt_, std::move(new_rt));
+}
+
+void apply_canned_rt_update(config const& c, data& d) {
+  auto const endpoints = make_endpoints(c, d);
+  auto rtt = create_empty_rt_timetable(d, today());
+  apply_canned(d, endpoints, *rtt);
+  publish_rt_timetable(d, std::move(rtt));
+}
+
+void apply_random_delays_rt_update(data& d, random_delay_options const& opt) {
+  // Default: first day of the timetable. This is where `motis generate`
+  // starts its default query window, which is what this is generated for.
+  auto rtt = create_empty_rt_timetable(
+      d, opt.date_.value_or(d.tt_->date_range_.from_));
+  generate_random_delays(*d.tt_, *rtt, opt);
+  publish_rt_timetable(d, std::move(rtt));
 }
 
 void run_rt_update(boost::asio::io_context& ioc, config const& c, data& d) {
