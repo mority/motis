@@ -1,11 +1,13 @@
 #include <fstream>
 #include <iostream>
+#include <sstream>
 
 #include "conf/configuration.h"
 
 #include "utl/init_from.h"
 #include "utl/parallel_for.h"
 #include "utl/parser/cstr.h"
+#include "utl/verify.h"
 
 #include "motis/config.h"
 #include "motis/data.h"
@@ -133,6 +135,9 @@ int batch(int ac, char** av) {
   auto responses_path = fs::path{"responses.txt"};
   auto n_threads = std::thread::hardware_concurrency();
   auto rt = false;
+  auto random_delays = false;
+  auto rd = random_delay_options{};
+  auto rd_date = std::string{};
 
   auto desc = po::options_description{"Options"};
   desc.add_options()  //
@@ -145,7 +150,34 @@ int batch(int ac, char** av) {
       ("rt", po::bool_switch(&rt),
        "apply a canned rt update (dump_rt/ in the working directory, written "
        "by a server run with an existing dump_rt directory) before running "
-       "the queries");
+       "the queries")  //
+      ("random_delays", po::bool_switch(&random_delays),
+       "generate random delays before running the queries: deterministic, "
+       "i.e. same binary + same timetable + same options = same rt "
+       "timetable")  //
+      ("rd_coverage",
+       po::value(&rd.coverage_)->default_value(rd.coverage_),
+       "random delays: probability that a transport appears in the rt feed at "
+       "all. A real feed covers close to all of the day's service and reports "
+       "most of it as on time, so a covered transport gets an rt_transport "
+       "even when it is punctual")  //
+      ("rd_lateness", po::value(&rd.lateness_)->default_value(rd.lateness_),
+       "random delays: probability that a *covered* transport is actually "
+       "late; rd_coverage * rd_lateness is the share of all transports that "
+       "are delayed")  //
+      ("rd_p_cancel",
+       po::value(&rd.cancel_probability_)
+           ->default_value(rd.cancel_probability_),
+       "random delays: probability that a transport is cancelled")  //
+      ("rd_max_delay", po::value(&rd.max_delay_)->default_value(rd.max_delay_),
+       "random delays: maximum delay in minutes")  //
+      ("rd_date", po::value(&rd_date),
+       "random delays: the day to generate rt data for, format: YYYY-MM-DD. "
+       "Data is generated for this day and the following one (a real-time "
+       "feed normally only covers what is currently running, plus enough of "
+       "tomorrow for journeys travelling overnight), so all queries should "
+       "ask for this day. Default: first day of the timetable, i.e. the same "
+       "day `motis generate` starts its default query window at.");
   add_data_path_opt(desc, data_path);
 
   auto vm = parse_opt(ac, av, desc);
@@ -153,6 +185,9 @@ int batch(int ac, char** av) {
     std::cout << desc << "\n";
     return 0;
   }
+
+  utl::verify(!(rt && random_delays),
+              "--rt and --random_delays are mutually exclusive");
 
   auto queries = std::vector<std::string_view>{};
   auto f = cista::mmap{queries_path.generic_string().c_str(),
@@ -171,6 +206,17 @@ int batch(int ac, char** av) {
 
   if (rt) {
     apply_canned_rt_update(c, d);
+  }
+  if (random_delays) {
+    if (!rd_date.empty()) {
+      auto in = std::istringstream{rd_date};
+      auto date = date::sys_days{};
+      in >> date::parse("%F", date);
+      utl::verify(!in.fail(), "invalid rd_date {}, format: YYYY-MM-DD",
+                  rd_date);
+      rd.date_ = date;
+    }
+    apply_random_delays_rt_update(d, rd);
   }
   gbfs::apply_canned_gbfs_update(c, d);
 
