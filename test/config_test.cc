@@ -209,4 +209,33 @@ street_routing: false
 street_routing: {}
 )"s));
   }
+
+  {  // routing_max_lookahead_minutes
+    // Not set = no limit
+    EXPECT_FALSE(config::read(R"(
+osm: europe-latest.osm.pbf
+)"s)
+                     .get_limits()
+                     .routing_max_lookahead_minutes_.has_value());
+
+    EXPECT_EQ(1440U, config::read(R"(
+osm: europe-latest.osm.pbf
+limits:
+  routing_max_lookahead_minutes: 1440
+)"s)
+                         .get_limits()
+                         .routing_max_lookahead_minutes_.value());
+
+    // Will throw if the lookahead is 0 or too large
+    EXPECT_ANY_THROW(config::read(R"(
+osm: europe-latest.osm.pbf
+limits:
+  routing_max_lookahead_minutes: 0
+)"s));
+    EXPECT_ANY_THROW(config::read(R"(
+osm: europe-latest.osm.pbf
+limits:
+  routing_max_lookahead_minutes: 99999
+)"s));
+  }
 }

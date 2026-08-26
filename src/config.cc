@@ -148,6 +148,12 @@ void config::verify() const {
                   nigiri::routing::kMaxSearchIntervalSize.count(),
               "plan_max_search_window_minutes limit cannot be above {}",
               nigiri::routing::kMaxSearchIntervalSize.count());
+  utl::verify(!limits_.value().routing_max_lookahead_minutes_.has_value() ||
+                  (*limits_.value().routing_max_lookahead_minutes_ >= 1U &&
+                   *limits_.value().routing_max_lookahead_minutes_ <=
+                       nigiri::routing::kMaxSearchIntervalSize.count()),
+              "routing_max_lookahead_minutes must be between 1 and {}",
+              nigiri::routing::kMaxSearchIntervalSize.count());
   utl::verify(limits_.value().geocode_max_suggestions_ >= 1U,
               "geocode_max_suggestions must be >= 1");
   utl::verify(limits_.value().reverse_geocode_max_results_ >= 1U,

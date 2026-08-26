@@ -1058,6 +1058,9 @@ api::plan_response routing::route(api::plan_params const& query,
                                   return std::optional{n::duration_t{dur}};
                                 })
                                 .value_or(kInfinityDuration),
+        .max_lookahead_ =
+            config_.get_limits().routing_max_lookahead_minutes_.transform(
+                [](unsigned const m) { return n::duration_t{m}; }),
         .min_connection_count_ = static_cast<unsigned>(query.numItineraries_),
         .extend_interval_earlier_ = start_time.extend_interval_earlier_,
         .extend_interval_later_ = start_time.extend_interval_later_,
@@ -1255,6 +1258,8 @@ api::plan_response routing::route(api::plan_params const& query,
         .to_ = bwd_compat_lvl_adjust(std::move(to_p), api_version),
         .direct_ = std::move(direct),
         .itineraries_ = std::move(itineraries),
+        .maxLookaheadExceeded_ =
+            r.max_lookahead_exceeded_ ? std::optional{true} : std::nullopt,
         .previousPageCursor_ =
             fmt::format("EARLIER|{}", to_seconds(search_interval.from_)),
         .nextPageCursor_ =

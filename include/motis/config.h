@@ -263,6 +263,11 @@ struct config {
     unsigned onetoall_max_results_{65535U};
     unsigned onetoall_max_travel_minutes_{90U};
     unsigned routing_max_timeout_seconds_{90U};
+    // Maximum distance in time between the queried time and the
+    // departure (`arriveBy=false`) / arrival (`arriveBy=true`) of a
+    // journey. Journeys beyond this window are not reported.
+    // Not set = no limit.
+    std::optional<unsigned> routing_max_lookahead_minutes_{};
     unsigned gtfsrt_expose_max_trip_updates_{100U};
     unsigned street_routing_max_prepost_transit_seconds_{3600U};
     unsigned street_routing_max_direct_seconds_{21600U};

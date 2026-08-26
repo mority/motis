@@ -1065,6 +1065,14 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/Itinerary'
+                  maxLookaheadExceeded:
+                    description: |
+                      Only set if the server is configured with a maximum lookahead
+                      (`limits.routing_max_lookahead_minutes`) and this limit truncated the search.
+                      `true` means that there are (or may be) journeys departing (`arriveBy=false`) /
+                      arriving (`arriveBy=true`) further away from the queried `time` than the
+                      configured maximum lookahead. Those journeys are not contained in `itineraries`.
+                    type: boolean
                   previousPageCursor:
                     description: |
                       Use the cursor to get the previous page of results. Insert the cursor into the request and post it to get the previous page.

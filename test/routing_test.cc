@@ -1048,3 +1048,59 @@ TEST(motis, routing) {
         to_str(res.itineraries_));
   }
 }
+
+TEST(motis, routing_max_lookahead) {
+  auto const query =
+      "?fromPlace=test_DA_10"
+      "&toPlace=test_FFM_10"
+      "&time=2019-05-01T01:40Z"
+      "&numItineraries=5"sv;
+
+  auto const run = [&](std::optional<unsigned> const max_lookahead_minutes) {
+    auto ec = std::error_code{};
+    std::filesystem::remove_all("test/data_max_lookahead", ec);
+
+    auto const c =
+        config{.server_ = {{.web_folder_ = "ui/build", .n_threads_ = 1U}},
+               .timetable_ =
+                   config::timetable{
+                       .first_day_ = "2019-05-01",
+                       .num_days_ = 2,
+                       .extend_missing_footpaths_ = false,
+                       .datasets_ = {{"test", {.path_ = std::string{kGTFS}}}}},
+               .limits_ = config::limits{.routing_max_lookahead_minutes_ =
+                                             max_lookahead_minutes}};
+    import(c, "test/data_max_lookahead");
+    auto d = data{"test/data_max_lookahead", c};
+    return utl::init_from<ep::routing>(d).value()(query);
+  };
+
+  {  // no limit: the next departure is 55min away and is reported
+    auto const res = run(std::nullopt);
+    ASSERT_FALSE(res.itineraries_.empty());
+    EXPECT_EQ(n::unixtime_t{sys_days{2019_y / May / 01}} + 2h + 35min,
+              std::chrono::time_point_cast<n::i32_minutes>(
+                  *res.itineraries_.front().startTime_));
+    EXPECT_FALSE(res.maxLookaheadExceeded_.has_value());
+  }
+
+  {  // 30min lookahead: the next departure is outside the window
+    auto const res = run(30U);
+    EXPECT_TRUE(res.itineraries_.empty());
+    ASSERT_TRUE(res.maxLookaheadExceeded_.has_value());
+    EXPECT_TRUE(*res.maxLookaheadExceeded_);
+  }
+
+  {  // 2h lookahead: only the departures within the window are reported
+    auto const res = run(120U);
+    ASSERT_EQ(2U, res.itineraries_.size());
+    EXPECT_EQ(n::unixtime_t{sys_days{2019_y / May / 01}} + 2h + 35min,
+              std::chrono::time_point_cast<n::i32_minutes>(
+                  *res.itineraries_.front().startTime_));
+    EXPECT_EQ(n::unixtime_t{sys_days{2019_y / May / 01}} + 3h + 35min,
+              std::chrono::time_point_cast<n::i32_minutes>(
+                  *res.itineraries_.back().startTime_));
+    ASSERT_TRUE(res.maxLookaheadExceeded_.has_value());
+    EXPECT_TRUE(*res.maxLookaheadExceeded_);
+  }
+}
