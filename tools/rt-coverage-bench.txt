@@ -213,7 +213,7 @@ Confirm the feed is what you expect -- every log should contain a line like:
   random delays: seed=0, date=2026-09-01, days=[2026-09-01, 2026-09-03),
   1490389 covered (297086 of them delayed), 0 cancelled transports
 
-Add `-nt 1` to `batch` if you want less noisy per-query timings (much slower).
+Add `--n_threads 1` to `batch` if you want less noisy per-query timings (much slower).
 
 
 --------------------------------------------------------------------------------
@@ -292,6 +292,32 @@ FAIL modes to watch for:
          something outside `coverage_` influences the search (e.g. td footpaths
          -- those are only guarded by `prf_idx_ == 0`).
 
+FULL RUN, 1000 queries, Germany, 8 threads (nigiri master a614f550 vs
+rt-coverage 1b35d5e7). `motis compare`: 1000/1000 equal in both scenarios;
+itinerary counts identical (A 10415, B 10669).
+
+  A: queries on the delay date -- the check must NOT fire
+
+    metric                              master     rt-coverage    ratio
+    execute_time                     8,804,050       8,567,306    1.03x
+    n_routes_visited            53,322,899,857  53,322,899,857    1.00x
+    n_earliest_trip_calls       57,612,585,709  57,612,585,709    1.00x
+    n_footpaths_visited         18,498,759,131  18,498,759,131    1.00x
+    wall clock                         18:41           18:12
+
+  B: queries a month later -- the check MUST fire
+
+    metric                              master     rt-coverage    ratio
+    execute_time                     8,005,841       2,049,237    3.91x
+    n_routes_visited            53,643,447,568   5,967,502,854    8.99x
+    n_earliest_trip_calls       56,670,466,133  43,575,611,544    1.30x
+    n_footpaths_visited         18,839,242,670  13,320,422,728    1.41x
+    lb_time                             32,689          24,116    1.36x
+    wall clock                         17:03            4:33      3.75x
+
+The response files for this run were deleted afterwards to make disk room for
+the arriveBy runs (section 12); these numbers are the record of it.
+
 Reference numbers from the 10-query pilot on Germany (503,506 locations,
 2,362,679 trips, 16 threads), summed over 10 queries:
 
@@ -329,3 +355,208 @@ random-delay update) even though none can match a query a month away.
   cd "$MOTIS"
   git checkout .pkg .pkg.lock && git checkout <your-branch>
   rm -rf "$WORK"
+
+================================================================================
+11. PONG VARIANT  (nigiri eda0261a "pong: drop rtt ptr if not needed")
+================================================================================
+
+WHAT IS DIFFERENT
+-----------------
+The same drop now also happens for PONG. The check sits in
+`pong_search_with_dir()` (src/routing/raptor/pong.cc), i.e. before the Vias/Rt
+dispatch, and uses `pong_needs_rt()` instead of `needs_rt()` because PONG's
+reachable window is not the same as range RAPTOR's:
+
+  - range RAPTOR extends its interval through `interval_estimator::extension()`,
+    which clamps to +-2 days (`data_type_max_interval_`), the external interval
+    and `q.max_interval_`. `max_interval()` is that hard ceiling.
+  - PONG has no such ceiling: it walks the start time one found journey at a
+    time and stops when it has enough connections or a ping comes up empty.
+    Nothing bounds that statically, so the window has to be the whole external
+    interval of the timetable in search direction.
+  - PONG also looks `kMinLookAhead` (1 day) further than `max_travel_time_`
+    (`worst_time_at_dest` in `pong()`), so the window is widened by that too.
+
+For forward queries this makes no practical difference to scenario B: the
+window starts at the query time, so coverage that lies entirely before the
+query is still disjoint and the rtt is still dropped.
+
+HOW THIS RUN WAS DONE
+---------------------
+Sections 0-6 apply unchanged, with these deltas:
+
+  - binaries: `motis-nigiri-master` (nigiri a614f550, reused from the RAPTOR
+    run) vs `motis-nigiri-pong-coverage` (nigiri eda0261a).
+  - queries: derived from the SAME `queries.txt` as the RAPTOR run, so the OD
+    pairs and times are identical and `algorithm` is the only difference:
+
+      ./motis-nigiri-master params -p "?algorithm=PONG" \
+          -i queries.txt -o queries_A_pong.txt
+      sed "s/time=${DELAY_DATE}T/time=${FAR_DATE}T/" \
+          queries_A_pong.txt > queries_B_pong.txt
+
+    PONG is the API default, but setting it explicitly documents the intent.
+    PONG only actually runs when `pong_applicable` holds
+    (src/endpoints/routing.cc): `timetableView` (default true) and
+    `arriveBy != extend_interval_later`. For these forward queries that is
+    satisfied. Verify per response with `debugOutput.algorithm == 1` (0=RAPTOR,
+    1=PONG, 2=TB) and check no log contains "PONG EXCEPTION" (that is the
+    silent fallback to RAPTOR).
+  - driver: `tools/rt-coverage-bench-run-pong.sh`, analysis:
+    `tools/rt-coverage-bench-analyze-pong.py` (both expect $WORK to hold the
+    binaries and query files; the analysis script reads $WORK too).
+  - 1000 queries, Germany, `--n_threads 8`.
+
+RESULT (1000 queries, Germany, 8 threads)
+-----------------------------------------
+`motis compare`: 1000 / 1000 equal in BOTH scenarios.
+Itinerary counts identical too: A 5159 vs 5159, B 5292 vs 5292.
+
+  A: queries on the delay date -- the check must NOT fire
+
+    metric                              master   pong-coverage    ratio
+    execute_time                     3,649,774       3,609,037    1.01x
+    n_routes_visited            20,370,060,090  20,370,060,090    1.00x
+    n_earliest_trip_calls       29,877,307,823  29,877,307,823    1.00x
+    n_footpaths_visited          6,962,367,247   6,962,367,247    1.00x
+    n_execute_fwd / n_execute_bwd  3,761/8,726     3,761/8,726    1.00x
+    wall clock                         7:43            7:38
+
+  B: queries a month later -- the check MUST fire
+
+    metric                              master   pong-coverage    ratio
+    execute_time                     3,241,676         968,617    3.35x
+    n_routes_visited            20,280,088,069   2,553,421,542    7.94x
+    n_earliest_trip_calls       28,351,010,596  23,748,223,762    1.19x
+    n_footpaths_visited          7,045,835,368   5,349,291,878    1.32x
+    lb_time                             32,196          24,242    1.33x
+    n_execute_fwd / n_execute_bwd  3,856/8,779     3,856/8,779    1.00x
+    wall clock                         6:51            2:05       3.28x
+
+Scenario A is bit-for-bit identical in every search counter, so the check never
+fires when the real-time data is relevant. In B the mechanism is the same one
+the RAPTOR run showed (rt transports are not grouped into routes, so `Rt=true`
+iterates every `location_rt_transports_` entry of each marked location).
+
+`n_execute_fwd` / `n_execute_bwd` are unchanged in B: the ping/pong alternation
+does exactly the same number of searches with and without the rtt, only each
+individual search is cheaper. That is the expected shape -- the check removes
+real-time work, it does not change the search structure.
+
+Compared with the range RAPTOR run on the same OD pairs (9.30x routes / 4.49x
+time on a 10-query pilot) PONG gains slightly less, which is consistent: the
+pong (backward) half of each iteration is pruned by the ping bounds already.
+
+KNOWN GAP (measured in section 12)
+----------------------------------
+`arriveBy=true` (backward) queries. PONG's backward window reaches from the
+query time back to the START of the timetable, so a backward query placed AFTER
+the coverage keeps the rtt, where range RAPTOR (capped at -2 days -
+max_travel_time) would drop it. A backward query placed BEFORE the coverage
+still drops it. Section 12 measures exactly this.
+
+Closing the gap is not a `needs_rt()` change -- it needs PONG's walk to get a
+static ceiling (e.g. honour
+`q.max_interval_` / `interval_estimator::max_interval()`), after which
+`pong_needs_rt()` could use the same window as `needs_rt()`.
+
+
+================================================================================
+12. arriveBy=true  (backward queries), RAPTOR *and* PONG
+================================================================================
+
+WHY THIS IS A SEPARATE RUN
+--------------------------
+Sections 6-11 are forward queries. Backward queries widen the relevant window
+in the other direction, and that is where the two algorithms differ most:
+
+  range RAPTOR   window = [t - 2d - max_travel_time, t + 2d]  (capped)
+  PONG           window = [timetable start - max_travel_time - kMinLookAhead, t]
+
+So a backward query placed AFTER the coverage is disjoint from it for RAPTOR
+but not for PONG -- PONG's walk has no static ceiling, so its window has to
+reach back to the start of the timetable.
+
+Three query dates against the coverage [2026-09-01, 2026-09-03):
+
+  C  2026-09-01  on the delay date     no check may fire (regression check)
+  D  2026-08-15  before the coverage   both checks must fire
+  E  2026-10-01  after the coverage    RAPTOR fires, PONG cannot
+
+Query sets are derived from the same `queries.txt` as every other section, so
+the OD pairs are identical throughout:
+
+  for alg in RAPTOR PONG; do
+    lc=$(echo $alg | tr A-Z a-z)
+    ./motis-nigiri-master params -p "?arriveBy=true&algorithm=$alg" \
+        -i queries.txt -o queries_C_${lc}.txt
+    sed "s/time=2026-09-01T/time=2026-08-15T/" \
+        queries_C_${lc}.txt > queries_D_${lc}.txt
+    sed "s/time=2026-09-01T/time=2026-10-01T/" \
+        queries_C_${lc}.txt > queries_E_${lc}.txt
+  done
+
+Driver: `tools/rt-coverage-bench-run-arriveby.sh`.
+
+BINARIES
+--------
+Both algorithms are run against nigiri master a614f550 vs nigiri eda0261a.
+eda0261a carries BOTH checks, so the RAPTOR arms here double as a regression
+check that splitting `needs_rt.h` into a shared core plus `needs_rt()` /
+`pong_needs_rt()` wrappers did not change RAPTOR's decision.
+
+RESULT (1000 queries each, Germany, 8 threads)
+----------------------------------------------
+`motis compare`: 1000 / 1000 equal in all six runs. Itinerary counts identical
+in all six as well.
+
+  C -- on the delay date, no check may fire
+
+    alg     metric                       master        eda0261a    ratio
+    RAPTOR  n_routes_visited     55,609,868,463  55,609,868,463    1.00x
+    RAPTOR  execute_time              9,075,484       9,136,664    0.99x
+    RAPTOR  wall clock                   19:15           19:23
+    PONG    n_routes_visited     20,227,326,183  20,227,326,183    1.00x
+    PONG    execute_time              3,570,629       3,553,488    1.00x
+    PONG    wall clock                    7:32            7:30
+
+  D -- before the coverage, both checks must fire
+
+    alg     metric                       master        eda0261a    ratio
+    RAPTOR  n_routes_visited     67,727,206,580   7,463,296,434    9.07x
+    RAPTOR  execute_time             10,726,351       2,781,138    3.86x
+    RAPTOR  wall clock                   23:09            6:14     3.71x
+    PONG    n_routes_visited     20,066,732,427   2,530,621,597    7.93x
+    PONG    execute_time              3,432,349       1,039,493    3.30x
+    PONG    wall clock                    7:14            2:14     3.24x
+
+  E -- after the coverage, RAPTOR fires and PONG cannot
+
+    alg     metric                       master        eda0261a    ratio
+    RAPTOR  n_routes_visited     57,192,163,872   6,209,772,891    9.21x
+    RAPTOR  execute_time              9,490,351       2,435,564    3.90x
+    RAPTOR  wall clock                   20:16            5:23     3.76x
+    PONG    n_routes_visited     20,951,428,551  20,951,428,551    1.00x
+    PONG    execute_time              3,722,479       3,715,129    1.00x
+    PONG    wall clock                    7:50            7:49
+
+HOW TO READ THIS
+----------------
+C is the backward regression check and passes for both: every counter is
+bit-for-bit identical, so neither check fires while the real-time data is
+relevant. That is the important one -- backward is where the window math
+differs (the `- max_reach` branch in `needs_rt()`).
+
+D shows the backward drop works for both algorithms, with the same ~9x / ~8x
+`n_routes_visited` collapse the forward runs showed.
+
+E is the cost of PONG's missing ceiling, in numbers: identical OD pairs, an
+identical coverage interval, and RAPTOR gets 9.21x while PONG gets 1.00x. In
+practice this is the common shape -- real-time coverage sits around "now" and
+the query is a planned trip in the future -- so it is the case worth fixing if
+backward queries far from the coverage matter for the deployment. Note it is
+not a correctness problem: PONG simply keeps the rtt and does the full work.
+
+`n_execute_fwd` / `n_execute_bwd` are unchanged between the two arms in all six
+runs, for both algorithms: the checks only make each individual search cheaper,
+they never change how many searches the algorithm performs.
