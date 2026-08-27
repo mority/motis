@@ -7,9 +7,9 @@
   branch=boost-1.89.0
   commit=b050b3988ba25ea7757462d26a38d225bfe20f75
 [cista]
-  url=git@github.com:felixguendling/cista.git
-  branch=master
-  commit=427f0a873be43f1de94289bd53d5678e07cd243f
+  url=git@github.com:mority/cista.git
+  branch=amd-gpu
+  commit=5fd98bf850998a876f72dcc122c97fb3aef14204
 [ctx]
   url=git@github.com:motis-project/ctx.git
   branch=master
@@ -37,7 +37,7 @@
 [nigiri]
   url=git@github.com:mority/nigiri.git
   branch=amd-gpu
-  commit=12005a7213ab568119faa17d07ebd298ca1dae0c
+  commit=767d4abaa540f43283b8d55c6120e2131349f16e
 [openapi-cpp]
   url=git@github.com:triptix-tech/openapi-cpp.git
   branch=master
