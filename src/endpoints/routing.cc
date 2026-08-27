@@ -40,7 +40,7 @@
 #include "nigiri/routing/tb/query_engine.h"
 #include "nigiri/routing/tb/tb_data.h"
 #include "nigiri/routing/tb/tb_search.h"
-#if defined(NIGIRI_CUDA)
+#if defined(NIGIRI_GPU)
 #include "nigiri/routing/gpu/raptor.h"
 #endif
 
@@ -1108,7 +1108,7 @@ api::plan_response routing::route(api::plan_params const& query,
     auto r = n::routing::routing_result{};
     auto algorithm = query.algorithm_;
     auto search_state = n::routing::search_state{};
-#if defined(NIGIRI_CUDA)
+#if defined(NIGIRI_GPU)
     auto gpu_used = false;
     auto const gpu_supported = n::routing::gpu::gpu_supported(q, rtt);
     auto const run_on_gpu = [&](bool const use_pong) -> bool {
@@ -1140,7 +1140,7 @@ api::plan_response routing::route(api::plan_params const& query,
         query.timetableView_ &&
         query.arriveBy_ != start_time.extend_interval_later_;
     while (true) {
-#if defined(NIGIRI_CUDA)
+#if defined(NIGIRI_GPU)
       if (algorithm != api::algorithmEnum::TB && gpu_supported &&
           run_on_gpu(/*use_pong=*/pong_applicable &&
                      algorithm == api::algorithmEnum::PONG)) {
@@ -1187,7 +1187,7 @@ api::plan_response routing::route(api::plan_params const& query,
     // record the algorithm that actually ran (after any fallbacks)
     auto const algo_stats = stats_map_t{
         {"algorithm", static_cast<std::uint64_t>(algorithm)},
-#if defined(NIGIRI_CUDA)
+#if defined(NIGIRI_GPU)
         {"gpu_used", gpu_used},
         {"gpu_supported", gpu_supported},
 #endif
@@ -1291,7 +1291,7 @@ api::plan_response routing_post::operator()(
                          .odm_bounds_ = odm_bounds_,
                          .ride_sharing_bounds_ = ride_sharing_bounds_,
                          .metrics_ = metrics_
-#if defined(NIGIRI_CUDA)
+#if defined(NIGIRI_GPU)
                          ,
                          .gpu_pool_ = gpu_pool_
 #endif

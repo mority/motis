@@ -34,7 +34,7 @@ struct point_rtree;
 template <typename T>
 using ptr = std::unique_ptr<T>;
 
-#if defined(NIGIRI_CUDA)
+#if defined(NIGIRI_GPU)
 struct gpu_search_pool {
   struct lease {
     lease(gpu_search_pool&, nigiri::routing::gpu::gpu_raptor_state&);
@@ -104,7 +104,7 @@ struct data {
                     railviz_static_, matches_, way_matches_, rt_, gbfs_,
                     odm_bounds_, ride_sharing_bounds_, flex_areas_, metrics_,
                     auser_
-#if defined(NIGIRI_CUDA)
+#if defined(NIGIRI_GPU)
                     ,
                     gpu_tt_, gpu_pool_
 #endif
@@ -144,7 +144,7 @@ struct data {
   ptr<flex::flex_areas> flex_areas_;
   ptr<metrics_registry> metrics_;
   ptr<std::map<std::string, auser>> auser_;
-#if defined(NIGIRI_CUDA)
+#if defined(NIGIRI_GPU)
   ptr<nigiri::routing::gpu::gpu_timetable> gpu_tt_;
   ptr<gpu_search_pool> gpu_pool_;
 #endif

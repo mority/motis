@@ -4,7 +4,7 @@
 
 #include "nigiri/rt/create_rt_timetable.h"
 
-#if defined(NIGIRI_CUDA)
+#if defined(NIGIRI_GPU)
 #include "nigiri/logging.h"
 #include "nigiri/routing/gpu/raptor.h"
 #endif
@@ -58,7 +58,7 @@ json::value update_elevator::operator()(json::value const& query) const {
       w_, l_, pl_, tt_, loc_rtree_, new_e, matches_, tasks, rtt, new_rtt,
       std::chrono::seconds{c_.timetable_.value().max_footpath_length_ * 60});
 
-#if defined(NIGIRI_CUDA)
+#if defined(NIGIRI_GPU)
   try {
     new_rtt.gpu_rtt_.ptr_ = n::routing::gpu::make_gpu_rtt(tt_, new_rtt);
   } catch (std::exception const& ex) {

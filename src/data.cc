@@ -28,7 +28,7 @@
 #include "nigiri/shapes_storage.h"
 #include "nigiri/timetable.h"
 
-#if defined(NIGIRI_CUDA)
+#if defined(NIGIRI_GPU)
 #include "nigiri/routing/gpu/raptor.h"
 #endif
 
@@ -52,7 +52,7 @@ namespace n = nigiri;
 
 namespace motis {
 
-#if defined(NIGIRI_CUDA)
+#if defined(NIGIRI_GPU)
 gpu_search_pool::lease::lease(gpu_search_pool& p,
                               n::routing::gpu::gpu_raptor_state& s)
     : pool_{p}, state_{s} {}
@@ -302,7 +302,7 @@ data::data(std::filesystem::path p, config const& c)
              "mismatch: n_matches={}, n_locations={}", matches_->size(),
              tt_->n_locations());
 
-#if defined(NIGIRI_CUDA)
+#if defined(NIGIRI_GPU)
   if (c.timetable_) {
     gpu_tt_ = std::make_unique<n::routing::gpu::gpu_timetable>(*tt_);
     gpu_pool_ = std::make_unique<gpu_search_pool>(

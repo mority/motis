@@ -31,6 +31,18 @@ if (MOTIS_MIMALLOC)
     endif()
 endif()
 
+# nigiri's HIP back end (NIGIRI_HIP) enables the HIP language inside its own
+# subdirectory, which leaves the top-level scope without HIP link rules - the
+# motis executable then gets an empty link command. Enable it here so the link
+# rules exist where the executable is defined. CMAKE_HIP_ARCHITECTURES must be
+# set before any target is created, hence before pkg.cmake pulls nigiri in.
+if (NIGIRI_HIP)
+    if (NOT DEFINED CMAKE_HIP_ARCHITECTURES AND NIGIRI_HIP_ARCH)
+        set(CMAKE_HIP_ARCHITECTURES ${NIGIRI_HIP_ARCH})
+    endif()
+    enable_language(HIP)
+endif()
+
 include(cmake/buildcache.cmake)
 include(cmake/pkg.cmake)
 
@@ -192,6 +204,22 @@ target_link_libraries(motis
 
 if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "AppleClang")
     target_link_options(motis PRIVATE -Wl,-no_deduplicate)
+endif()
+
+# nigiri-gpu's hip::host usage puts --hip-link on the link line, which only the
+# HIP compiler understands. CMake otherwise picks CXX here and hands that flag
+# to the C++ driver, so the link fails; force the HIP driver to do the linking.
+if (NIGIRI_HIP)
+    # nigiri sets CMAKE_HIP_ARCHITECTURES in its own directory scope, so it is
+    # not visible here and the target would be left with an empty one
+    if (NIGIRI_HIP_ARCH)
+        set(motis-hip-arch ${NIGIRI_HIP_ARCH})
+    else()
+        set(motis-hip-arch ${CMAKE_HIP_ARCHITECTURES})
+    endif()
+    set_target_properties(motis PROPERTIES
+            LINKER_LANGUAGE HIP
+            HIP_ARCHITECTURES "${motis-hip-arch}")
 endif()
 
 # --- TEST ---

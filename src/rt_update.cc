@@ -17,7 +17,7 @@
 #include "nigiri/rt/gtfsrt_update.h"
 #include "nigiri/rt/rt_timetable.h"
 
-#if defined(NIGIRI_CUDA)
+#if defined(NIGIRI_GPU)
 #include "nigiri/routing/gpu/raptor.h"
 #endif
 
@@ -89,7 +89,7 @@ using stats_t = std::variant<n::rt::statistics, n::rt::vdv_aus::statistics>;
 
 void upload_gpu_rtt([[maybe_unused]] data const& d,
                     [[maybe_unused]] n::rt_timetable& rtt) {
-#if defined(NIGIRI_CUDA)
+#if defined(NIGIRI_GPU)
   utl::verify(d.gpu_tt_ != nullptr, "upload_gpu_rtt: gpu timetable missing");
   try {
     rtt.gpu_rtt_.ptr_ = n::routing::gpu::make_gpu_rtt(*d.tt_, rtt);

@@ -136,7 +136,7 @@ struct routing {
   odm::bounds const* odm_bounds_;
   odm::ride_sharing_bounds const* ride_sharing_bounds_;
   metrics_registry* metrics_;
-#if defined(NIGIRI_CUDA)
+#if defined(NIGIRI_GPU)
   gpu_search_pool* gpu_pool_{nullptr};
 #endif
 };
@@ -165,7 +165,7 @@ struct routing_post {
   odm::bounds const* odm_bounds_;
   odm::ride_sharing_bounds const* ride_sharing_bounds_;
   metrics_registry* metrics_;
-#if defined(NIGIRI_CUDA)
+#if defined(NIGIRI_GPU)
   gpu_search_pool* gpu_pool_{nullptr};
 #endif
 };
