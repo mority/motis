@@ -138,6 +138,8 @@ int batch(int ac, char** av) {
   auto random_delays = false;
   auto rd = random_delay_options{};
   auto rd_date = std::string{};
+  auto rd_time = static_cast<unsigned>(rd.time_of_day_.count());
+  auto rd_window = static_cast<unsigned>(rd.window_.count());
 
   auto desc = po::options_description{"Options"};
   desc.add_options()  //
@@ -172,12 +174,19 @@ int batch(int ac, char** av) {
       ("rd_max_delay", po::value(&rd.max_delay_)->default_value(rd.max_delay_),
        "random delays: maximum delay in minutes")  //
       ("rd_date", po::value(&rd_date),
-       "random delays: the day to generate rt data for, format: YYYY-MM-DD. "
-       "Data is generated for this day and the following one (a real-time "
-       "feed normally only covers what is currently running, plus enough of "
-       "tomorrow for journeys travelling overnight), so all queries should "
-       "ask for this day. Default: first day of the timetable, i.e. the same "
-       "day `motis generate` starts its default query window at.");
+       "random delays: the day of the feed's \"now\", format: YYYY-MM-DD. "
+       "Default: first day of the timetable, i.e. the same day `motis "
+       "generate` starts its default query window at.")  //
+      ("rd_time", po::value(&rd_time)->default_value(rd_time),
+       "random delays: time of day (UTC, hours after midnight) of the feed's "
+       "\"now\". Real-time only matters for here-and-now queries, so all "
+       "queries should be fixed to this instant: `motis generate "
+       "--time_of_day <this>`")  //
+      ("rd_window", po::value(&rd_window)->default_value(rd_window),
+       "random delays: minutes after \"now\" the feed reaches. A transport is "
+       "in the feed iff it is running or about to run in [now, now+window). "
+       "This bounds rt_timetable::coverage_ - generating whole days instead "
+       "makes essentially the entire timetable look real-time relevant");
   add_data_path_opt(desc, data_path);
 
   auto vm = parse_opt(ac, av, desc);
@@ -216,6 +225,11 @@ int batch(int ac, char** av) {
                   rd_date);
       rd.date_ = date;
     }
+    utl::verify(rd_time < 24U, "invalid rd_time {}, must be in [0, 24)",
+                rd_time);
+    utl::verify(rd_window > 0U, "invalid rd_window {}, must be > 0", rd_window);
+    rd.time_of_day_ = std::chrono::hours{rd_time};
+    rd.window_ = std::chrono::minutes{rd_window};
     apply_random_delays_rt_update(d, rd);
   }
   gbfs::apply_canned_gbfs_update(c, d);

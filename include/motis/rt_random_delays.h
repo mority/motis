@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <optional>
 
@@ -36,21 +37,35 @@ struct random_delay_options {
   // Maximum delay in minutes.
   unsigned max_delay_{30U};
 
-  // The day real-time data is generated for. Real-time feeds normally only
-  // cover what is currently running, so this generates data for this day and
-  // the following one - the following day so that journeys departing on
-  // `date_` and travelling overnight still see real-time data, matching a feed
-  // that already knows about tomorrow's early departures.
-  //
-  // Also the base day of the real-time timetable. Default: the first day of
-  // the timetable, which is where `motis generate` starts its default query
-  // window. All queries should ask for `date_`, otherwise they route on the
-  // scheduled timetable in all but name.
+  // The day of the feed's "now" (see `time_of_day_`), and the base day of the
+  // real-time timetable. Default: the first day of the timetable, which is
+  // where `motis generate` starts its default query window.
   std::optional<date::sys_days> date_{};
+
+  // Time of day (UTC) of the feed's "now", as hours after midnight on
+  // `date_`. Real-time is only relevant for here-and-now queries, so all
+  // queries should ask for exactly this instant - otherwise they route on the
+  // scheduled timetable in all but name. Matches `motis generate
+  // --time_of_day`.
+  std::chrono::hours time_of_day_{8};
+
+  // How far ahead of "now" the feed reaches. A transport is in the feed iff
+  // it is running (or about to run) somewhere in `[now, now + window_)`, i.e.
+  // iff `[first departure, last arrival]` intersects that interval.
+  //
+  // This is what bounds `rt_timetable::coverage_`, so it is the single most
+  // important knob for anything that keys off the coverage. Real feeds carry
+  // the currently running service plus the next couple of hours; generating
+  // whole days instead materialises an `rt_transport` for essentially the
+  // entire timetable and makes every query look real-time relevant.
+  std::chrono::minutes window_{180};
 };
 
-// Number of days `generate_random_delays()` covers: `date_` and the day after.
-constexpr auto const kRandomDelayDays = 2;
+// How many days around the base day are swept for transports that fall into
+// the feed window. One day of slack on either side catches transports that
+// departed yesterday and are still running, and the timetable's own
+// midnight-crossing offsets.
+constexpr auto const kRandomDelayDayRadius = 1;
 
 // Deterministically generates random delays and cancellations in `rtt`.
 //

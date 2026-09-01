@@ -20,7 +20,14 @@ constexpr auto const adr_ext_version = []() {
   return meta_entry_t{"adr_ext_bin_ver", 6U};
 };
 constexpr auto const n_version = []() {
-  return meta_entry_t{"nigiri_bin_ver", 37U};
+  // BENCHMARK-LOCAL: bumped 37 -> 38 to read a data directory imported by a
+  // motis on the rt-raptor line. The nigiri `timetable` struct is identical
+  // between nigiri master and rt-raptor (only the *loader* differs, i.e. the
+  // footpath content), and cista validates the struct's static_type_hash on
+  // read - so a real layout mismatch would refuse to load rather than
+  // silently misread. Both A/B variants read the same file, so this does not
+  // affect the comparison. Do not commit.
+  return meta_entry_t{"nigiri_bin_ver", 38U};
 };
 constexpr auto const tbd_version = []() {
   return meta_entry_t{"tbd_bin_ver", 1U};

@@ -10,6 +10,7 @@
 #include "utl/timer.h"
 
 #include "nigiri/logging.h"
+#include "nigiri/common/interval.h"
 #include "nigiri/rt/rt_timetable.h"
 #include "nigiri/rt/run.h"
 #include "nigiri/timetable.h"
@@ -70,32 +71,32 @@ void generate_random_delays(n::timetable const& tt,
   auto const base_day =
       static_cast<int>((rtt.base_day_ - tt_days.from_).count());
 
-  // `date_` and the day after it: a real-time feed normally only covers what
-  // is currently running, plus enough of tomorrow for journeys that travel
-  // overnight. `rtt.base_day_` is `date_`, so this is [base_day, base_day + 2).
+  // The feed's "now" and how far ahead of it the feed reaches. A transport is
+  // in the feed iff it is running (or about to run) inside this interval -
+  // that is what a real feed delivers, and it is what bounds
+  // `rt_timetable::coverage_`.
+  auto const now = n::unixtime_t{
+      std::chrono::time_point_cast<n::unixtime_t::duration>(rtt.base_day_) +
+      opt.time_of_day_};
+  auto const feed = n::interval<n::unixtime_t>{now, now + opt.window_};
+
+  // The days swept for transports falling into `feed`. One day of slack on
+  // either side catches transports that departed yesterday and are still
+  // running.
   //
   // Real-time event times are stored as `delta_t` (int16 minutes relative to
   // the base day), so days too far away from the base day can not be
-  // represented -- not a concern at two days, but kept as a guard.
-  auto const requested_first = base_day;
-  auto const requested_last = requested_first + kRandomDelayDays;
+  // represented -- not a concern at one day, but kept as a guard.
   auto const first_day =
-      std::clamp(requested_first, std::max(0, base_day - kMaxDayOffset),
-                 std::max(0, base_day + kMaxDayOffset));
+      std::clamp(base_day - kRandomDelayDayRadius,
+                 std::max(0, base_day - kMaxDayOffset), std::max(0, n_tt_days));
   auto const last_day = std::max(
-      first_day,
-      std::min({requested_last, n_tt_days, static_cast<int>(n::kMaxDays),
-                base_day + kMaxDayOffset + 1}));
+      first_day, std::min({base_day + kRandomDelayDayRadius + 1, n_tt_days,
+                           static_cast<int>(n::kMaxDays),
+                           base_day + kMaxDayOffset + 1}));
   auto const to_date = [&](int const d) {
     return date::format("%F", tt_days.from_ + date::days{d});
   };
-  if (first_day != requested_first || last_day != requested_last) {
-    n::log(n::log_lvl::info, "motis.rt",
-           "random delays: requested days [{}, {}) truncated to [{}, {}) "
-           "(timetable date range)",
-           to_date(requested_first), to_date(requested_last),
-           to_date(first_day), to_date(last_day));
-  }
 
   auto n_covered = 0U, n_delayed = 0U, n_cancelled = 0U;
   auto const n_transports = n::transport_idx_t{
@@ -114,7 +115,21 @@ void generate_random_delays(n::timetable const& tt,
         continue;
       }
 
-      auto r = n::rt::run{.t_ = n::transport{t, day},
+      auto const tr = n::transport{t, day};
+
+      // Not in the feed's window: a real feed does not report a transport
+      // that has already arrived or that does not run until much later.
+      // Checked before anything is drawn from `gen` so that the window does
+      // not change which random numbers a transport gets.
+      auto const first_dep =
+          tt.event_time(tr, n::stop_idx_t{0U}, n::event_type::kDep);
+      auto const last_arr = tt.event_time(
+          tr, static_cast<n::stop_idx_t>(n_stops - 1U), n::event_type::kArr);
+      if (last_arr < feed.from_ || feed.to_ <= first_dep) {
+        continue;
+      }
+
+      auto r = n::rt::run{.t_ = tr,
                           .stop_range_ = {n::stop_idx_t{0U}, n_stops}};
       auto gen = rng{transport_seed(opt.seed_, t, day)};
 
@@ -176,10 +191,11 @@ void generate_random_delays(n::timetable const& tt,
   }
 
   n::log(n::log_lvl::info, "motis.rt",
-         "random delays: seed={}, date={}, days=[{}, {}), {} covered ({} of "
-         "them delayed), {} cancelled transports",
-         opt.seed_, date::format("%F", rtt.base_day_), to_date(first_day),
-         to_date(last_day), n_covered, n_delayed, n_cancelled);
+         "random delays: seed={}, now={}, window=[{}, {}) ({}min), swept days "
+         "[{}, {}), {} covered ({} of them delayed), {} cancelled transports",
+         opt.seed_, now, feed.from_, feed.to_, opt.window_.count(),
+         to_date(first_day), to_date(last_day), n_covered, n_delayed,
+         n_cancelled);
 }
 
 }  // namespace motis
