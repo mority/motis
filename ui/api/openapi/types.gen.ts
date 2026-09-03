@@ -2168,7 +2168,7 @@ export type PlanData = {
         /**
          * algorithm to use
          */
-        algorithm?: 'RAPTOR' | 'PONG' | 'TB';
+        algorithm?: 'RAPTOR' | 'PONG' | 'TB' | 'LB_RAPTOR';
         /**
          * Optional. Default is `false`.
          *

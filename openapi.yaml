@@ -996,6 +996,7 @@ paths:
               - RAPTOR
               - PONG
               - TB
+              - LB_RAPTOR
             default: PONG
       responses:
         '422':

@@ -20,7 +20,10 @@ constexpr auto const adr_ext_version = []() {
   return meta_entry_t{"adr_ext_bin_ver", 6U};
 };
 constexpr auto const n_version = []() {
-  return meta_entry_t{"nigiri_bin_ver", 38U};
+  // 39: lb routes (location_lb_routes_, lb_route_times_, lb_route_root_seq_)
+  //     added to nigiri::timetable on branch lb_raptor_routes
+  // 40: lb routes are built over station complexes (location_complex_)
+  return meta_entry_t{"nigiri_bin_ver", 40U};
 };
 constexpr auto const tbd_version = []() {
   return meta_entry_t{"tbd_bin_ver", 1U};

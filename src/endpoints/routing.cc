@@ -31,6 +31,7 @@
 #include "nigiri/constants.h"
 #include "nigiri/for_each_meta.h"
 #include "nigiri/location_match_mode.h"
+#include "nigiri/routing/lb_raptor/bidir_lb_raptor.h"
 #include "nigiri/routing/limits.h"
 #include "nigiri/routing/pareto_set.h"
 #include "nigiri/routing/query.h"
@@ -1141,7 +1142,8 @@ api::plan_response routing::route(api::plan_params const& query,
         query.arriveBy_ != start_time.extend_interval_later_;
     while (true) {
 #if defined(NIGIRI_CUDA)
-      if (algorithm != api::algorithmEnum::TB && gpu_supported &&
+      if (algorithm != api::algorithmEnum::TB &&
+          algorithm != api::algorithmEnum::LB_RAPTOR && gpu_supported &&
           run_on_gpu(/*use_pong=*/pong_applicable &&
                      algorithm == api::algorithmEnum::PONG)) {
         gpu_used = true;
@@ -1149,7 +1151,40 @@ api::plan_response routing::route(api::plan_params const& query,
       }
 #endif
 
-      if (algorithm == api::algorithmEnum::PONG && pong_applicable) {
+      if (algorithm == api::algorithmEnum::LB_RAPTOR) {
+        // the lb routes are built in nigiri's finalize(), so a timetable
+        // imported before they existed has none
+        if (tt_->n_lb_routes(q.prf_idx_) == 0U) {
+          std::cout << "LB_RAPTOR: no lb routes in the timetable "
+                       "(re-import required) -> RAPTOR\n";
+          algorithm = api::algorithmEnum::RAPTOR;
+          continue;
+        }
+        try {
+          r = n::routing::bidir_lb_raptor_search(
+              *tt_, rtt, search_state, q,
+              query.arriveBy_ ? n::direction::kBackward
+                              : n::direction::kForward,
+              query.timeout_.has_value() ? std::chrono::seconds{*query.timeout_}
+                                         : max_timeout);
+          // The result is a set of alternatives in pattern order, not a pareto
+          // front; shrink() and the UI both expect journeys ordered by
+          // departure.
+          std::sort(begin(search_state.results_.els_),
+                    end(search_state.results_.els_),
+                    [](n::routing::journey const& a,
+                       n::routing::journey const& b) {
+                      return std::tie(a.start_time_, a.dest_time_,
+                                      a.transfers_) <
+                             std::tie(b.start_time_, b.dest_time_,
+                                      b.transfers_);
+                    });
+        } catch (std::exception const& e) {
+          std::cout << "LB_RAPTOR EXCEPTION: " << e.what() << "\n";
+          algorithm = api::algorithmEnum::RAPTOR;
+          continue;
+        }
+      } else if (algorithm == api::algorithmEnum::PONG && pong_applicable) {
         try {
           auto raptor_state = n::routing::raptor_state{};
           r = n::routing::pong_search(
