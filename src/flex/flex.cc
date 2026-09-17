@@ -389,7 +389,7 @@ void add_flex_td_offsets(osr::ways const& w,
             if (iv_at_from_stop.from_ < iv_at_from_stop.to_ &&
                 duration < n::footpath::kMaxDuration) {
               add_td_window(
-                  ret[l], iv_at_from_stop.from_, iv_at_from_stop.to_, duration,
+                  ret[l], iv_at_from_stop, duration,
                   transport_mode(api::ModeEnum::FLEX, id.to_payload()));
             }
           }

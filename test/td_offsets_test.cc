@@ -40,7 +40,7 @@ struct offer {
 std::vector<n::routing::td_offset> raw(std::initializer_list<offer> offers) {
   auto v = std::vector<n::routing::td_offset>{};
   for (auto const& o : offers) {
-    motis::add_td_window(v, t(o.from_), t(o.to_), o.duration_,
+    motis::add_td_window(v, n::interval{t(o.from_), t(o.to_)}, o.duration_,
                          {.payload_ = o.mode_});
   }
   return v;

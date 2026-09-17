@@ -103,19 +103,22 @@ void normalize_td_offsets(std::vector<n::routing::td_offset>& offsets) {
 }
 
 void add_td_window(std::vector<n::routing::td_offset>& offsets,
-                   n::unixtime_t const from,
-                   n::unixtime_t const to,
+                   n::interval<n::unixtime_t> const window,
                    n::duration_t const duration,
                    n::routing::transport_mode_t const mode) {
-  if (!offsets.empty() && offsets.back().mode() == mode &&
-      offsets.back().valid_from_ >= from) {
-    // touches or overlaps the previous window of this mode -> extend it
-    offsets.back().valid_from_ = std::max(offsets.back().valid_from_, to);
+  if (window.from_ >= window.to_) {
     return;
   }
-  offsets.push_back(n::routing::td_offset::make(from, duration, mode));
+  if (!offsets.empty() && offsets.back().mode() == mode &&
+      offsets.back().valid_from_ >= window.from_) {
+    // touches or overlaps the previous window of this mode -> extend it
+    offsets.back().valid_from_ =
+        std::max(offsets.back().valid_from_, window.to_);
+    return;
+  }
+  offsets.push_back(n::routing::td_offset::make(window.from_, duration, mode));
   offsets.push_back(
-      n::routing::td_offset::make(to, n::footpath::kMaxDuration, mode));
+      n::routing::td_offset::make(window.to_, n::footpath::kMaxDuration, mode));
 }
 
 }  // namespace motis

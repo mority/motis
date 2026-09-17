@@ -2,6 +2,7 @@
 
 #include <vector>
 
+#include "nigiri/common/interval.h"
 #include "nigiri/routing/query.h"
 
 namespace motis {
@@ -13,14 +14,14 @@ namespace motis {
 void normalize_td_offsets(std::vector<nigiri::routing::td_offset>&);
 
 // Appends the window [from, to) of `mode` as the entries {from, duration} and
-// {to, kMaxDuration}. A window that touches or overlaps the previous window of
-// the same mode extends that window instead, so the entries of each mode stay a
-// step function for normalize_td_offsets.
+// {to, kMaxDuration}. An empty window (from >= to) is skipped. A window that
+// touches or overlaps the previous window of the same mode extends that window
+// instead, so the entries of each mode stay a step function for
+// normalize_td_offsets.
 // Precondition: the windows of a mode are added consecutively, in ascending
 // order of `from`, and with the same duration.
 void add_td_window(std::vector<nigiri::routing::td_offset>&,
-                   nigiri::unixtime_t from,
-                   nigiri::unixtime_t to,
+                   nigiri::interval<nigiri::unixtime_t> window,
                    nigiri::duration_t,
                    nigiri::routing::transport_mode_t);
 

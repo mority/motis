@@ -303,4 +303,42 @@ TEST(odm, get_td_offsets_late_worse) {
   EXPECT_EQ(td_offsets.at(location_idx_t{1U})[1].mode(), kOdmTransportMode);
 }
 
+// Taxi td offsets for a single stop with a 20 min ride and the given service
+// times. With one offset, everything ends up in the "short" half of the split.
+std::vector<td_offset> taxi_td_offsets(service_times_t const& service_times) {
+  auto const [lo, hi] = get_td_offsets_split(
+      {offset{location_idx_t{1U}, 20min, kOdmTransportMode}}, {service_times},
+      kOdmTransportMode);
+  EXPECT_TRUE(hi.empty());
+  EXPECT_TRUE(lo.contains(location_idx_t{1U}));
+  return lo.at(location_idx_t{1U});
+}
+
+TEST(odm, get_td_offsets_split_basic) {
+  // Service 10:00-11:00, the ride has to end by 11:00 -> latest departure
+  // 10:40, the offset ends at 10:41.
+  EXPECT_EQ(
+      (std::vector{td_offset::make(unixtime_t{10h}, 20min, kOdmTransportMode),
+                   td_offset::make(unixtime_t{10h + 41min},
+                                   footpath::kMaxDuration, kOdmTransportMode)}),
+      taxi_td_offsets({{unixtime_t{10h}, unixtime_t{11h}}}));
+}
+
+TEST(odm, get_td_offsets_split_too_short) {
+  // A 15 min service time can't fit a 20 min ride.
+  EXPECT_TRUE(
+      taxi_td_offsets({{unixtime_t{10h}, unixtime_t{10h + 15min}}}).empty());
+}
+
+TEST(odm, get_td_offsets_split_overlapping) {
+  // Departure windows [10:00, 10:41) and [10:30, 11:41) overlap and are
+  // merged, so the offset does not end at 10:41.
+  EXPECT_EQ(
+      (std::vector{td_offset::make(unixtime_t{10h}, 20min, kOdmTransportMode),
+                   td_offset::make(unixtime_t{11h + 41min},
+                                   footpath::kMaxDuration, kOdmTransportMode)}),
+      taxi_td_offsets({{unixtime_t{10h}, unixtime_t{11h}},
+                       {unixtime_t{10h + 30min}, unixtime_t{12h}}}));
+}
+
 }  // namespace motis::odm
