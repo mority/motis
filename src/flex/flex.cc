@@ -22,6 +22,7 @@
 #include "motis/match_platforms.h"
 #include "motis/osr/max_distance.h"
 #include "motis/osr/one_to_many_searches.h"
+#include "motis/td_offsets.h"
 
 namespace n = nigiri;
 
@@ -387,13 +388,9 @@ void add_flex_td_offsets(osr::ways const& w,
 
             if (iv_at_from_stop.from_ < iv_at_from_stop.to_ &&
                 duration < n::footpath::kMaxDuration) {
-              auto const mode =
-                  transport_mode(api::ModeEnum::FLEX, id.to_payload());
-              auto& offsets = ret[l];
-              offsets.push_back(n::routing::td_offset::make(
-                  iv_at_from_stop.from_, duration, mode));
-              offsets.push_back(n::routing::td_offset::make(
-                  iv_at_from_stop.to_, n::footpath::kMaxDuration, mode));
+              add_td_window(
+                  ret[l], iv_at_from_stop.from_, iv_at_from_stop.to_, duration,
+                  transport_mode(api::ModeEnum::FLEX, id.to_payload()));
             }
           }
         }
