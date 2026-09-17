@@ -2,6 +2,8 @@
 
 #include <ranges>
 
+#include "motis/td_offsets.h"
+
 using namespace std::chrono_literals;
 namespace n = nigiri;
 namespace nr = nigiri::routing;
@@ -31,13 +33,18 @@ std::pair<nr::td_offsets_t, nr::td_offsets_t> get_td_offsets_split(
                                      auto const& times_split) {
     auto td_offsets = nr::td_offsets_t{};
     for (auto const [o, t] : std::views::zip(offsets_split, times_split)) {
-      td_offsets.emplace(o.target_, std::vector<nr::td_offset>{});
+      auto& tdos = td_offsets[o.target_];
+      // prima merges the service times, so they arrive sorted, as
+      // add_td_window requires
       for (auto const& i : t) {
-        td_offsets[o.target_].push_back(
-            nr::td_offset::make(i.from_, o.duration_, mode));
-        td_offsets[o.target_].push_back(nr::td_offset::make(
-            i.to_ - o.duration_ + 1min, n::footpath::kMaxDuration, mode));
+        // the whole ride has to fit into the service time (inclusive end)
+        auto const departures =
+            n::interval<n::unixtime_t>{i.from_, i.to_ - o.duration_ + 1min};
+        if (departures.from_ < departures.to_) {
+          add_td_window(tdos, departures, o.duration_, mode);
+        }
       }
+      normalize_td_offsets(tdos);
     }
     return td_offsets;
   };

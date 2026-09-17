@@ -35,17 +35,13 @@ struct offer {
   n::routing::transport_mode_t::payload_t mode_;
 };
 
-// Builds the raw input as the producers do: every offer contributes a start
-// entry and a kMaxDuration closer, both tagged with the offer's mode.
+// Builds the raw input as the producers do: every offer is added as a window
+// via add_td_window.
 std::vector<n::routing::td_offset> raw(std::initializer_list<offer> offers) {
   auto v = std::vector<n::routing::td_offset>{};
   for (auto const& o : offers) {
-    v.push_back({.valid_from_ = t(o.from_),
-                 .duration_ = o.duration_,
-                 .transport_mode_payload_ = o.mode_});
-    v.push_back({.valid_from_ = t(o.to_),
-                 .duration_ = n::footpath::kMaxDuration,
-                 .transport_mode_payload_ = o.mode_});
+    motis::add_td_window(v, n::interval{t(o.from_), t(o.to_)}, o.duration_,
+                         {.payload_ = o.mode_});
   }
   return v;
 }
@@ -63,6 +59,14 @@ n::routing::td_offset inactive(int const from) {
   return {.valid_from_ = t(from),
           .duration_ = n::footpath::kMaxDuration,
           .transport_mode_payload_ = 0U};
+}
+
+// Raw end of a window of `mode`, as added by add_td_window.
+n::routing::td_offset closer(
+    int const from, n::routing::transport_mode_t::payload_t const mode) {
+  return {.valid_from_ = t(from),
+          .duration_ = n::footpath::kMaxDuration,
+          .transport_mode_payload_ = mode};
 }
 
 // Arrival time the routing core (nigiri's get_td_duration) yields for a
@@ -241,6 +245,68 @@ TEST(motis, td_offsets_merge_inactive_after_cut) {
   // Inside the fast window the arrival grows monotonically again:
   EXPECT_EQ(t(260), arrival(offsets, 250));
   EXPECT_EQ(t(310), arrival(offsets, 300));
+}
+
+TEST(motis, td_offsets_same_mode_touching_windows) {
+  auto const mode = flex_payload(1U, 0U, osr::direction::kBackward);
+
+  // [100, 200) and [200, 300) of the same mode (e.g. the same flex transport on
+  // consecutive days): add_td_window merges them, so the step function of the
+  // mode has no two entries at 200.
+  auto offsets = raw({
+      {100, 200, n::duration_t{10}, mode},
+      {200, 300, n::duration_t{10}, mode},
+  });
+  EXPECT_EQ((std::vector{active(100, 10, mode), closer(300, mode)}), offsets);
+
+  motis::normalize_td_offsets(offsets);
+  EXPECT_EQ((std::vector{inactive(0), active(100, 10, mode), inactive(300)}),
+            offsets);
+  EXPECT_EQ(t(260), arrival(offsets, 250));
+}
+
+TEST(motis, td_offsets_same_mode_nested_windows) {
+  auto const mode = flex_payload(1U, 0U, osr::direction::kBackward);
+
+  // [200, 250) lies inside [100, 300), both of the same mode. add_td_window
+  // merges them, so the end of the inner window does not end the outer one.
+  auto offsets = raw({
+      {100, 300, n::duration_t{10}, mode},
+      {200, 250, n::duration_t{10}, mode},
+  });
+  EXPECT_EQ((std::vector{active(100, 10, mode), closer(300, mode)}), offsets);
+
+  motis::normalize_td_offsets(offsets);
+  EXPECT_EQ((std::vector{inactive(0), active(100, 10, mode), inactive(300)}),
+            offsets);
+  EXPECT_EQ(t(270), arrival(offsets, 260));
+}
+
+// add_td_window checks nothing, so a caller that breaks the contract gets a
+// wrong result. This documents what goes wrong; it is not desired behaviour.
+TEST(motis, td_offsets_ill_formed_windows) {
+  auto const mode = flex_payload(1U, 0U, osr::direction::kBackward);
+
+  // Overlapping windows of one mode with different durations: extending the
+  // first window keeps its duration, so the 30 min of [150, 250) are lost.
+  auto overlapping = raw({
+      {100, 200, n::duration_t{10}, mode},
+      {150, 250, n::duration_t{30}, mode},
+  });
+  EXPECT_EQ((std::vector{active(100, 10, mode), closer(250, mode)}),
+            overlapping);
+  motis::normalize_td_offsets(overlapping);
+  EXPECT_EQ(t(210), arrival(overlapping, 200));  // 230 with the real duration
+
+  // Windows added out of order: the earlier one is swallowed by the later one
+  // instead of being added.
+  auto unsorted = raw({
+      {200, 300, n::duration_t{10}, mode},
+      {100, 150, n::duration_t{10}, mode},
+  });
+  EXPECT_EQ((std::vector{active(200, 10, mode), closer(300, mode)}), unsorted);
+  motis::normalize_td_offsets(unsorted);
+  EXPECT_EQ(t(210), arrival(unsorted, 100));  // 110 if [100, 150) were there
 }
 
 TEST(motis, td_offsets_preserve_mode_payload) {
