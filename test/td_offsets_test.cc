@@ -243,6 +243,48 @@ TEST(motis, td_offsets_merge_inactive_after_cut) {
   EXPECT_EQ(t(310), arrival(offsets, 300));
 }
 
+TEST(motis, td_offsets_same_mode_touching_windows) {
+  auto const mode = flex_payload(1U, 0U, osr::direction::kBackward);
+
+  // [100, 200) and [200, 300) of the same mode: at 200 the closer of the first
+  // window and the opener of the second share the time stamp. The result must
+  // not depend on which of the two is processed first.
+  auto const expected =
+      std::vector{inactive(0), active(100, 10, mode), inactive(300)};
+
+  auto in_order = raw({
+      {100, 200, n::duration_t{10}, mode},
+      {200, 300, n::duration_t{10}, mode},
+  });
+  motis::normalize_td_offsets(in_order);
+  EXPECT_EQ(expected, in_order);
+
+  auto reversed = raw({
+      {200, 300, n::duration_t{10}, mode},
+      {100, 200, n::duration_t{10}, mode},
+  });
+  motis::normalize_td_offsets(reversed);
+  EXPECT_EQ(expected, reversed);
+
+  EXPECT_EQ(t(260), arrival(reversed, 250));
+}
+
+TEST(motis, td_offsets_same_mode_nested_windows) {
+  auto const mode = flex_payload(1U, 0U, osr::direction::kBackward);
+
+  // [200, 250) lies inside [100, 300), both of the same mode. Closing the inner
+  // window must not end the outer one.
+  auto offsets = raw({
+      {100, 300, n::duration_t{10}, mode},
+      {200, 250, n::duration_t{10}, mode},
+  });
+  motis::normalize_td_offsets(offsets);
+
+  EXPECT_EQ((std::vector{inactive(0), active(100, 10, mode), inactive(300)}),
+            offsets);
+  EXPECT_EQ(t(270), arrival(offsets, 260));
+}
+
 TEST(motis, td_offsets_preserve_mode_payload) {
   auto const backward = flex_payload(42U, 3U, osr::direction::kBackward);
 
