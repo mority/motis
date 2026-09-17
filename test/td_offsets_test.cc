@@ -35,11 +35,14 @@ struct offer {
   n::routing::transport_mode_t::payload_t mode_;
 };
 
-// Builds the raw input as the producers do: every offer is added as a window
-// via add_td_window.
+// Builds the raw input as the producers do: sorted by mode and time, every
+// offer added as a window via add_td_window.
 std::vector<n::routing::td_offset> raw(std::initializer_list<offer> offers) {
+  auto sorted = std::vector<offer>{offers};
+  std::ranges::sort(sorted, {},
+                    [](offer const& o) { return std::pair{o.mode_, o.from_}; });
   auto v = std::vector<n::routing::td_offset>{};
-  for (auto const& o : offers) {
+  for (auto const& o : sorted) {
     motis::add_td_window(v, n::interval{t(o.from_), t(o.to_)}, o.duration_,
                          {.payload_ = o.mode_});
   }
@@ -279,6 +282,28 @@ TEST(motis, td_offsets_same_mode_nested_windows) {
   motis::normalize_td_offsets(offsets);
 
   EXPECT_EQ((std::vector{inactive(0), active(100, 10, mode), inactive(300)}),
+            offsets);
+  EXPECT_EQ(t(270), arrival(offsets, 260));
+}
+
+TEST(motis, td_offsets_same_mode_interleaved_windows) {
+  auto const a = flex_payload(1U, 0U, osr::direction::kBackward);
+  auto const b = flex_payload(2U, 0U, osr::direction::kBackward);
+
+  // The two windows of `a` touch at 200 while a window of `b` lies in between.
+  // Sorted by mode and time, as add_td_window requires, they still merge.
+  auto offsets = raw({
+      {100, 200, n::duration_t{10}, a},
+      {150, 250, n::duration_t{10}, b},
+      {200, 300, n::duration_t{10}, a},
+  });
+  EXPECT_EQ((std::vector{active(100, 10, a), closer(300, a), active(150, 10, b),
+                         closer(250, b)}),
+            offsets);
+
+  motis::normalize_td_offsets(offsets);
+  EXPECT_EQ((std::vector{inactive(0), active(100, 10, std::min(a, b)),
+                         inactive(300)}),
             offsets);
   EXPECT_EQ(t(270), arrival(offsets, 260));
 }

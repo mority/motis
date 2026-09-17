@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <optional>
 
+#include "utl/verify.h"
+
 #include "nigiri/footpath.h"
 
 #include "motis/types.h"
@@ -110,8 +112,15 @@ void add_td_window(std::vector<n::routing::td_offset>& offsets,
     return;
   }
   if (!offsets.empty() && offsets.back().mode() == mode &&
+      offsets.back().duration_ >= n::footpath::kMaxDuration &&
       offsets.back().valid_from_ >= window.from_) {
-    // touches or overlaps the previous window of this mode -> extend it
+    // touches or overlaps the previous window of this mode -> extend it.
+    // Its opener is the entry before the closer; a different duration there
+    // would be lost by extending.
+    utl::verify(offsets.size() >= 2U &&
+                    offsets[offsets.size() - 2U].duration_ == duration,
+                "add_td_window: overlapping windows of one mode must have the "
+                "same duration");
     offsets.back().valid_from_ =
         std::max(offsets.back().valid_from_, window.to_);
     return;

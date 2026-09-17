@@ -34,7 +34,9 @@ std::pair<nr::td_offsets_t, nr::td_offsets_t> get_td_offsets_split(
     auto td_offsets = nr::td_offsets_t{};
     for (auto const [o, t] : std::views::zip(offsets_split, times_split)) {
       auto& tdos = td_offsets[o.target_];
-      for (auto const& i : t) {
+      auto service_times = t;  // add_td_window needs them sorted
+      std::ranges::sort(service_times, {}, &n::interval<n::unixtime_t>::from_);
+      for (auto const& i : service_times) {
         // the whole ride has to fit into the service time (inclusive end)
         add_td_window(tdos, n::interval{i.from_, i.to_ - o.duration_ + 1min},
                       o.duration_, mode);

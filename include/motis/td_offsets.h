@@ -18,8 +18,9 @@ void normalize_td_offsets(std::vector<nigiri::routing::td_offset>&);
 // touches or overlaps the previous window of the same mode extends that window
 // instead, so the entries of each mode stay a step function for
 // normalize_td_offsets.
-// Precondition: the windows of a mode are added consecutively, in ascending
-// order of `from`, and with the same duration.
+// Only the last entry is looked at, so the caller has to add the windows
+// sorted by mode and by `from`. Overlapping windows of the same mode have to
+// have the same duration; otherwise the first one's duration wins.
 void add_td_window(std::vector<nigiri::routing::td_offset>&,
                    nigiri::interval<nigiri::unixtime_t> window,
                    nigiri::duration_t,
