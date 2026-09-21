@@ -5,6 +5,7 @@
 #include "nigiri/types.h"
 
 #include "motis/odm/prima.h"
+#include "motis/td_offsets.h"
 #include "motis/transport_mode.h"
 
 namespace motis::odm {
@@ -61,9 +62,12 @@ nigiri::routing::td_offsets_t get_td_offsets(auto const& rides,
   return td_offsets;
 }
 
+// `norm_stats`, if given, collects what the normalization did; the caller
+// decides under which key it lands in the response (evaluation only).
 std::pair<nigiri::routing::td_offsets_t, nigiri::routing::td_offsets_t>
 get_td_offsets_split(std::vector<nigiri::routing::offset> const&,
                      std::vector<service_times_t> const&,
-                     transport_mode_t);
+                     transport_mode_t,
+                     td_norm_stats* = nullptr);
 
 }  // namespace motis::odm

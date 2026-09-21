@@ -35,9 +35,9 @@
   branch=master
   commit=d1d445326a5d3ec77e14394fee60962d08894ba0
 [nigiri]
-  url=git@github.com:motis-project/nigiri.git
-  branch=master
-  commit=8268521628ff9dc56378fd26fd9706f25681c1db
+  url=git@github.com:mority/nigiri.git
+  branch=td_offsets
+  commit=b151d7479e926fe8e9f06f9697b408cd1ed6d2b7
 [openapi-cpp]
   url=git@github.com:triptix-tech/openapi-cpp.git
   branch=master

@@ -324,3 +324,102 @@ TEST(motis, td_offsets_preserve_mode_payload) {
   EXPECT_EQ(n::flex_transport_idx_t{42U}, restored.get_flex_transport());
   EXPECT_EQ(static_cast<n::stop_idx_t>(3U), restored.get_stop());
 }
+
+// --- Instrumentation for the evaluation ------------------------------------
+
+TEST(motis, td_offsets_stats_blocked_window) {
+  auto const slow = flex_payload(1U, 0U, osr::direction::kBackward);
+  auto const fast = flex_payload(2U, 0U, osr::direction::kBackward);
+
+  // Same input as td_offsets_drop_fully_dominated_window: the slow window is
+  // replaced entirely, so step 2 reports one blocked and no cut window.
+  auto offsets = raw({
+      {100, 200, n::duration_t{100}, slow},
+      {150, 250, n::duration_t{10}, fast},
+  });
+  auto stats = motis::td_norm_stats{};
+  motis::normalize_td_offsets(offsets, &stats);
+
+  EXPECT_EQ(1U, stats.n_locations_);
+  EXPECT_EQ(4U, stats.n_raw_);  // two windows, two raw entries each
+  EXPECT_EQ(2U, stats.q_max_);  // both offers available at the same time
+  EXPECT_EQ(1U, stats.n_fifo_blocked_);
+  EXPECT_EQ(0U, stats.n_fifo_cut_);
+  EXPECT_EQ(1U, stats.n_leading_);  // sequence starts after t=0
+  EXPECT_EQ(offsets.size(), stats.n_out_);
+}
+
+TEST(motis, td_offsets_stats_cut_window) {
+  auto const slow = flex_payload(1U, 0U, osr::direction::kBackward);
+  auto const fast = flex_payload(2U, 0U, osr::direction::kBackward);
+
+  // Same input as td_offsets_merge_inactive_after_cut: only the tail of the
+  // slow window is dominated, so step 2 reports one cut and nothing blocked.
+  auto offsets = raw({
+      {100, 200, n::duration_t{100}, slow},
+      {250, 400, n::duration_t{10}, fast},
+  });
+  auto stats = motis::td_norm_stats{};
+  motis::normalize_td_offsets(offsets, &stats);
+
+  EXPECT_EQ(1U, stats.n_fifo_cut_);
+  EXPECT_EQ(0U, stats.n_fifo_blocked_);
+  EXPECT_EQ(1U, stats.q_max_);  // the windows do not overlap
+  EXPECT_EQ(offsets.size(), stats.n_out_);
+}
+
+TEST(motis, td_offsets_stats_accumulate_over_locations) {
+  auto const a = flex_payload(1U, 0U, osr::direction::kBackward);
+  auto stats = motis::td_norm_stats{};
+
+  auto first = raw({{100, 200, n::duration_t{10}, a}});
+  motis::normalize_td_offsets(first, &stats);
+  auto second = raw({{300, 400, n::duration_t{10}, a}});
+  motis::normalize_td_offsets(second, &stats);
+
+  EXPECT_EQ(2U, stats.n_locations_);
+  EXPECT_EQ(4U, stats.n_raw_);
+  EXPECT_EQ(first.size() + second.size(), stats.n_out_);
+}
+
+TEST(motis, td_offsets_fifo_repair_can_be_disabled) {
+  auto const slow = flex_payload(1U, 0U, osr::direction::kBackward);
+  auto const fast = flex_payload(2U, 0U, osr::direction::kBackward);
+
+  struct restore {
+    ~restore() { motis::fifo_repair_enabled() = prev_; }
+    bool prev_;
+  } const guard{motis::fifo_repair_enabled()};
+
+  auto with_repair = raw({
+      {100, 200, n::duration_t{100}, slow},
+      {150, 250, n::duration_t{10}, fast},
+  });
+  motis::normalize_td_offsets(with_repair);
+
+  motis::fifo_repair_enabled() = false;
+  auto without_repair = raw({
+      {100, 200, n::duration_t{100}, slow},
+      {150, 250, n::duration_t{10}, fast},
+  });
+  motis::normalize_td_offsets(without_repair);
+
+  EXPECT_NE(with_repair, without_repair);
+
+  // Without step 2 the slow offer survives, and the sequence violates FIFO:
+  // departing later arrives earlier. This is exactly what the repair prevents.
+  EXPECT_EQ(t(200), arrival(without_repair, 100));
+  EXPECT_EQ(t(160), arrival(without_repair, 150));
+  EXPECT_LT(arrival(without_repair, 150), arrival(without_repair, 100));
+
+  // With the repair the arrival never decreases as the departure grows.
+  // The fast window [150, 250) is half-open, so 249 is the last departure
+  // that can still start a ride.
+  auto prev = arrival(with_repair, 100);
+  for (auto dep = 101; dep < 250; ++dep) {
+    auto const cur = arrival(with_repair, dep);
+    ASSERT_TRUE(cur.has_value()) << "at minute " << dep;
+    EXPECT_GE(*cur, *prev) << "at minute " << dep;
+    prev = cur;
+  }
+}

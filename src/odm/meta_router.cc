@@ -61,13 +61,16 @@ constexpr auto kODMLookAhead = nigiri::duration_t{24h};
 constexpr auto kSearchIntervalSize = nigiri::duration_t{10h};
 constexpr auto kContextPadding = nigiri::duration_t{2h};
 
-void print_time(auto const& start,
-                std::string_view name,
-                prometheus::Histogram& metric) {
+// Returns the elapsed milliseconds so the caller can also record the phase
+// in the per-query stats; the log line and the histogram are unchanged.
+std::uint64_t print_time(auto const& start,
+                         std::string_view name,
+                         prometheus::Histogram& metric) {
   auto const millis = std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now() - start);
   n::log(n::log_lvl::debug, "motis.prima", "{} {}", name, millis);
   metric.Observe(static_cast<double>(millis.count()) / 1000.0);
+  return static_cast<std::uint64_t>(millis.count());
 }
 
 meta_router::meta_router(ep::routing const& r,
@@ -328,7 +331,7 @@ api::plan_response meta_router::run() {
     std::erase(*modes, api::ModeEnum::FLEX);
   }
 
-  print_time(
+  prepare_stats["odm_init_ms"] = print_time(
       init_start,
       fmt::format("[init] (#first_mile_offsets: {}, #last_mile_offsets: {}, "
                   "#direct_rides: {})",
@@ -338,7 +341,8 @@ api::plan_response meta_router::run() {
 
   auto const blacklist_start = std::chrono::steady_clock::now();
   auto const blacklisted_taxis = p.blacklist_taxi(*tt_, taxi_intvl);
-  print_time(blacklist_start,
+  prepare_stats["odm_blacklist_taxi_ms"] = print_time(
+      blacklist_start,
              fmt::format("[blacklist taxi] (#first_mile_offsets: {}, "
                          "#last_mile_offsets: {}, #direct_rides: {})",
                          p.first_mile_taxi_.size(), p.last_mile_taxi_.size(),
@@ -350,7 +354,7 @@ api::plan_response meta_router::run() {
   n::log(n::log_lvl::debug, "motis.prima",
          "[whitelist ride-sharing] ride-sharing events after whitelisting: {}",
          p.n_ride_sharing_events());
-  print_time(
+  prepare_stats["odm_whitelist_ride_sharing_ms"] = print_time(
       whitelist_ride_sharing_start,
       fmt::format("[whitelist ride-sharing] (#first_mile_ride_sharing: {}, "
                   "#last_mile_ride_sharing: {}, #direct_ride_sharing: {})",
@@ -360,11 +364,16 @@ api::plan_response meta_router::run() {
       r_.metrics_->routing_execution_duration_seconds_blacklisting_);
 
   auto const prep_queries_start = std::chrono::steady_clock::now();
+  auto first_mile_norm = td_norm_stats{};
+  auto last_mile_norm = td_norm_stats{};
   auto const [first_mile_taxi_short, first_mile_taxi_long] =
       get_td_offsets_split(p.first_mile_taxi_, p.first_mile_taxi_times_,
-                           kOdmTransportMode);
+                           kOdmTransportMode, &first_mile_norm);
   auto const [last_mile_taxi_short, last_mile_taxi_long] = get_td_offsets_split(
-      p.last_mile_taxi_, p.last_mile_taxi_times_, kOdmTransportMode);
+      p.last_mile_taxi_, p.last_mile_taxi_times_, kOdmTransportMode,
+      &last_mile_norm);
+  first_mile_norm.write(prepare_stats, "td_norm_odm_first_mile");
+  last_mile_norm.write(prepare_stats, "td_norm_odm_last_mile");
   auto const params = get_osr_parameters(query_);
   auto const pre_transit_time = std::min(
       std::chrono::seconds{query_.maxPreTransitTime_},
@@ -432,7 +441,8 @@ api::plan_response meta_router::run() {
                                                  kRideSharingTransportMode)
                                 : get_td_offsets(p.last_mile_ride_sharing_,
                                                  kRideSharingTransportMode)};
-  print_time(prep_queries_start, "[prepare queries]",
+  prepare_stats["odm_prepare_queries_ms"] = print_time(
+      prep_queries_start, "[prepare queries]",
              r_.metrics_->routing_execution_duration_seconds_preparing_);
 
   auto const routing_start = std::chrono::steady_clock::now();
@@ -442,6 +452,18 @@ api::plan_response meta_router::run() {
          "[prepare queries] {} queries prepared", sub_queries.size());
   auto const results = search_interval(sub_queries);
   utl::verify(!results.empty(), "prima: public transport result expected");
+  // The meta-router runs several sub-queries. Sum their routing-core
+  // statistics so the ODM branch reports the same counters as the plain
+  // routing endpoint does.
+  for (auto const& r : results) {
+    for (auto const& [k, v] : r.algo_stats_) {
+      prepare_stats[k] += v;
+    }
+    for (auto const& [k, v] : r.search_stats_.to_map()) {
+      prepare_stats[k] += v;
+    }
+  }
+  prepare_stats["odm_sub_queries"] = sub_queries.size();
   auto const& pt_result = results.front();
   auto taxi_journeys = collect_odm_journeys(results, kOdmTransportMode);
   shorten(taxi_journeys, p.first_mile_taxi_, p.first_mile_taxi_times_,
@@ -462,7 +484,8 @@ api::plan_response meta_router::run() {
       });
   n::log(n::log_lvl::debug, "motis.prima", "[routing] interval searched: {}",
          pt_result.interval_);
-  print_time(routing_start, "[routing]",
+  prepare_stats["odm_routing_ms"] = print_time(
+      routing_start, "[routing]",
              r_.metrics_->routing_execution_duration_seconds_routing_);
 
   auto const whitelist_start = std::chrono::steady_clock::now();
@@ -476,7 +499,8 @@ api::plan_response meta_router::run() {
     add_direct_odm(p.direct_ride_sharing_, ride_share_journeys, from_, to_,
                    query_.arriveBy_, kRideSharingTransportMode);
   }
-  print_time(whitelist_start,
+  prepare_stats["odm_whitelist_taxi_ms"] = print_time(
+      whitelist_start,
              fmt::format("[whitelisting] (#first_mile_taxi: {}, "
                          "#last_mile_taxi: {}, #direct_taxi: {})",
                          p.first_mile_taxi_.size(), p.last_mile_taxi_.size(),
@@ -509,6 +533,7 @@ api::plan_response meta_router::run() {
                    taxi_journeys.begin()->departure_time())));
   }
   return {
+      .debugOutput_ = std::move(prepare_stats),
       .from_ = bwd_compat_lvl_adjust(from_place_, api_version_),
       .to_ = bwd_compat_lvl_adjust(to_place_, api_version_),
       .direct_ = std::move(direct_),

@@ -204,9 +204,11 @@ n::routing::td_offsets_t get_td_offsets(
         });
   }
 
+  auto norm_stats = td_norm_stats{};
   for (auto& [l, location_offsets] : ret) {
-    normalize_td_offsets(location_offsets);
+    normalize_td_offsets(location_offsets, &norm_stats);
   }
+  norm_stats.write(stats, fmt::format("td_norm_{}", to_str(dir)));
 
   return ret;
 }
