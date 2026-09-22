@@ -334,21 +334,37 @@ int generate(int ac, char** av) {
   auto const flex_seeds = [&] {
     auto v = std::vector<flex_seed>{};
     if (use_flex) {
+      auto n_areas_in_bounds = 0U;
       for (auto i = 0U; i != d.tt_->flex_area_locations_.size(); ++i) {
         auto const a = n::flex_area_idx_t{i};
         auto const area_stops = d.tt_->flex_area_locations_[a];
+        auto const n_before = v.size();
         for (auto const l : area_stops) {
-          v.emplace_back(d.tt_->locations_.coordinates_[l], l);
+          auto const pos = d.tt_->locations_.coordinates_[l];
+          if (!in_bounds(pos)) {
+            continue;
+          }
+          v.emplace_back(pos, l);
         }
         auto const& bbox = d.tt_->flex_area_bbox_[a];
-        v.emplace_back(  // use flex area center
+        auto const center =
             geo::latlng{(bbox.min_.lat_ + bbox.max_.lat_) / 2.0,
-                        (bbox.min_.lng_ + bbox.max_.lng_) / 2.0},
-            area_stops.empty() ? n::location_idx_t::invalid() : area_stops[0]);
+                        (bbox.min_.lng_ + bbox.max_.lng_) / 2.0};
+        if (in_bounds(center)) {
+          v.emplace_back(  // use flex area center
+              center, area_stops.empty() ? n::location_idx_t::invalid()
+                                         : area_stops[0]);
+        }
+        if (v.size() != n_before) {
+          ++n_areas_in_bounds;
+        }
       }
-      utl::verify(!v.empty(), "no flex areas in timetable");
-      fmt::println("flex: {} areas, {} seeds (stops + area centers)",
-                   d.tt_->flex_area_locations_.size(), v.size());
+      utl::verify(!v.empty(), "no flex areas in timetable{}",
+                  bounds == nullptr ? "" : " within bounds");
+      fmt::println("flex: {} areas ({} in bounds), {} seeds (stops + area "
+                   "centers)",
+                   d.tt_->flex_area_locations_.size(), n_areas_in_bounds,
+                   v.size());
     }
     return v;
   }();
