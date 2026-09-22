@@ -146,8 +146,18 @@ int generate(int ac, char** av) {
   };
 
   auto const parse_bounds = [&](std::string_view const s) {
-    bounds = s == "europe" ? tg_parse_geojson(kEuropeBounds)
-                           : tg_parse_geojsonn(s.data(), s.size());
+    if (s == "europe") {
+      bounds = tg_parse_geojson(kEuropeBounds);
+    } else if (auto const p = fs::path{s}; fs::is_regular_file(p)) {
+      // A polygon of any real size exceeds MAX_ARG_STRLEN (128 KB) and cannot
+      // be passed inline, so a path to the GeoJSON is accepted as well.
+      auto in = std::ifstream{p, std::ios::binary};
+      auto const content = std::string{std::istreambuf_iterator<char>{in},
+                                       std::istreambuf_iterator<char>{}};
+      bounds = tg_parse_geojsonn(content.data(), content.size());
+    } else {
+      bounds = tg_parse_geojsonn(s.data(), s.size());
+    }
     if (char const* err = tg_geom_error(bounds)) {
       throw utl::fail("unable to parse bounds GeoJSON: {}", err);
     }
@@ -198,7 +208,8 @@ int generate(int ac, char** av) {
        "emit queries with geo-rank r, i.e., the target is the 2^r-th stop from "
        "the source in terms of geographical distance, overrides lb_rank")  //
       ("bounds,b", po::value<std::string>()->notifier(parse_bounds),
-       "randomize locations within bounds, format: GeoJSON"
+       "randomize locations within bounds, format: GeoJSON or a path "
+       "to a .geojson file"
        "(shorthand for Europe \"-b europe\")");
   add_data_path_opt(desc, data_path);
   auto vm = parse_opt(ac, av, desc);
@@ -359,12 +370,32 @@ int generate(int ac, char** av) {
           ++n_areas_in_bounds;
         }
       }
-      utl::verify(!v.empty(), "no flex areas in timetable{}",
+      // Feeds that express flex service through location groups (stop sets)
+      // instead of locations.geojson zones have no flex_area and would
+      // otherwise be unreachable as query origins.
+      auto n_groups_in_bounds = 0U;
+      for (auto i = 0U; i != d.tt_->location_group_locations_.size(); ++i) {
+        auto const g = n::location_group_idx_t{i};
+        auto const n_before = v.size();
+        for (auto const l : d.tt_->location_group_locations_[g]) {
+          auto const pos = d.tt_->locations_.coordinates_[l];
+          if (!in_bounds(pos)) {
+            continue;
+          }
+          v.emplace_back(pos, l);
+        }
+        if (v.size() != n_before) {
+          ++n_groups_in_bounds;
+        }
+      }
+      utl::verify(!v.empty(),
+                  "no flex areas or location groups in timetable{}",
                   bounds == nullptr ? "" : " within bounds");
-      fmt::println("flex: {} areas ({} in bounds), {} seeds (stops + area "
-                   "centers)",
+      fmt::println("flex: {} areas ({} in bounds), {} location groups ({} in "
+                   "bounds), {} seeds",
                    d.tt_->flex_area_locations_.size(), n_areas_in_bounds,
-                   v.size());
+                   d.tt_->location_group_locations_.size(),
+                   n_groups_in_bounds, v.size());
     }
     return v;
   }();
