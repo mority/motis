@@ -158,6 +158,22 @@ std::optional<n::duration_t> scan_bwd(
   return r.has_value() ? std::optional{r->first} : std::nullopt;
 }
 
+
+// Design D evaluated on the RAW vector (no envelope, no repair, no sort).
+std::optional<n::unixtime_t> raw_fwd(
+    std::vector<n::routing::td_offset> const& raw, int const dep) {
+  auto const r = n::get_td_duration_raw_windows<n::direction::kForward>(
+      std::span<n::routing::td_offset const>{raw}, t(dep));
+  return r.has_value() ? std::optional{t(dep) + r->first} : std::nullopt;
+}
+
+std::optional<n::duration_t> raw_bwd(
+    std::vector<n::routing::td_offset> const& raw, int const arr) {
+  auto const r = n::get_td_duration_raw_windows<n::direction::kBackward>(
+      std::span<n::routing::td_offset const>{raw}, t(arr));
+  return r.has_value() ? std::optional{r->first} : std::nullopt;
+}
+
 }  // namespace
 
 TEST(motis, td_offsets_keep_shortest_same_window) {
@@ -662,4 +678,59 @@ TEST(motis, td_offsets_property_alpha_tilde_backward) {
             << " scan_wrong=" << scan_wrong << std::endl;
   EXPECT_EQ(0, fast_wrong);
   EXPECT_EQ(0, scan_wrong);
+}
+
+// Design D: the producers' windows, evaluated directly. Must reproduce the
+// same alpha_tilde as the normalized fast path -- in BOTH directions. The
+// backward branch is checked explicitly because reasoning by analogy from the
+// forward one produced a 78%-wrong implementation once already.
+TEST(motis, td_offsets_property_raw_windows) {
+  auto rng = std::mt19937{11};
+  auto n_provider = std::uniform_int_distribution<int>{1, 3};
+  auto n_win = std::uniform_int_distribution<int>{1, 4};
+  auto gap = std::uniform_int_distribution<int>{0, 120};
+  auto len = std::uniform_int_distribution<int>{5, 180};
+  auto dur = std::uniform_int_distribution<int>{1, 200};
+  auto const horizon = 3000;
+  auto fwd_wrong = 0, bwd_wrong = 0, cases = 0;
+
+  for (auto iter = 0; iter != 2000; ++iter) {
+    auto per_provider = std::vector<std::vector<n::routing::td_offset>>{};
+    auto raw = std::vector<n::routing::td_offset>{};
+    for (auto j = 0, q = n_provider(rng); j != q; ++j) {
+      auto const mode = flex_payload(static_cast<std::uint32_t>(j + 1), 0,
+                                     osr::direction::kForward);
+      auto own = std::vector<n::routing::td_offset>{};
+      auto cursor = gap(rng);
+      for (auto w = 0, nw = n_win(rng); w != nw; ++w) {
+        auto const from = cursor, to = from + len(rng);
+        auto const d = n::duration_t{dur(rng)};
+        motis::add_td_window(own, n::interval{t(from), t(to)}, d, {.payload_ = mode});
+        motis::add_td_window(raw, n::interval{t(from), t(to)}, d, {.payload_ = mode});
+        cursor = to + gap(rng);
+      }
+      if (!own.empty()) per_provider.push_back(std::move(own));
+    }
+    if (raw.empty() || per_provider.empty()) continue;
+
+    for (auto x = 0; x <= 900; x += 29) {
+      ++cases;
+      auto fexp = std::optional<n::unixtime_t>{};
+      auto bexp = std::optional<n::duration_t>{};
+      for (auto const& seq : per_provider) {
+        auto const f = alpha_brute(seq, x, horizon);
+        if (f.has_value() && (!fexp.has_value() || *f < *fexp)) fexp = f;
+        if (x >= 60) {
+          auto const b = alpha_brute_bwd(seq, x, horizon);
+          if (b.has_value() && (!bexp.has_value() || *b < *bexp)) bexp = b;
+        }
+      }
+      if (raw_fwd(raw, x) != fexp) ++fwd_wrong;
+      if (x >= 60 && raw_bwd(raw, x) != bexp) ++bwd_wrong;
+    }
+  }
+  std::cout << "RAW-WINDOWS cases=" << cases << " fwd_wrong=" << fwd_wrong
+            << " bwd_wrong=" << bwd_wrong << std::endl;
+  EXPECT_EQ(0, fwd_wrong);
+  EXPECT_EQ(0, bwd_wrong);
 }

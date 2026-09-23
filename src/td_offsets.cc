@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
+#include <string_view>
 #include <optional>
 
 #include "nigiri/footpath.h"
@@ -78,9 +79,34 @@ bool is_same_td_state(n::routing::td_offset const& a,
   return a.duration_ == b.duration_ && a.mode() == b.mode();
 }
 
+// Design D (MOTIS_TD_RAW=1): hand the routing core exactly what the producers
+// delivered -- no envelope, no FIFO repair, no closure, and deliberately NO
+// SORT, so the {from, l, mode} / {to, inf, mode} pairs stay adjacent and the
+// published windows remain recoverable. Only correct together with
+// NIGIRI_TD_RAW_WINDOW_LOOKUP, which evaluates every window independently and
+// takes the minimum -- the losslessness equation computed per query instead of
+// built once per stop. With the CHEAP lookup this same raw vector is the
+// pre-aaa1f2d behaviour and simply wrong: overlapping windows of competing
+// providers make ehat(t) meaningless.
+static bool td_raw() {
+  static bool const v = [] {
+    auto const* const e = std::getenv("MOTIS_TD_RAW");
+    return e != nullptr && std::string_view{e} == "1";
+  }();
+  return v;
+}
+
 void normalize_td_offsets(std::vector<n::routing::td_offset>& offsets,
                           td_norm_stats* const stats) {
   if (offsets.empty()) {
+    return;
+  }
+
+  if (td_raw()) {
+    if (stats != nullptr) {
+      auto const n = offsets.size();
+      stats->add(n, n, n, n, 0U, 0U, 0U, false, 0U, 0U, 0U, 0U);
+    }
     return;
   }
 
