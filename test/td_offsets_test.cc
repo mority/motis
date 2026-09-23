@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <initializer_list>
 #include <optional>
+#include <random>
+#include <iostream>
 #include <span>
 #include <vector>
 
@@ -76,6 +78,84 @@ std::optional<n::unixtime_t> arrival(
   auto const r = n::get_td_duration<n::direction::kForward>(
       std::span<n::routing::td_offset const>{offsets}, t(dep));
   return r.has_value() ? std::optional{t(dep) + r->first} : std::nullopt;
+}
+
+
+// alpha_tilde of ONE well-formed sequence, straight from the definition:
+//   alpha(tau) = min_{t >= tau} ( t + l_{ehat(t)} ),  ehat(t) = max{e : tau_e <= t}
+// Valid only for a sequence with strictly increasing tau_e, which a single
+// provider's disjoint windows satisfy by construction.
+std::optional<n::unixtime_t> alpha_brute(
+    std::vector<n::routing::td_offset> const& seq,
+    int const dep,
+    int const horizon) {
+  auto best = std::optional<n::unixtime_t>{};
+  for (auto m = dep; m <= horizon; ++m) {
+    auto const now = t(m);
+    auto e = seq.end();
+    for (auto i = seq.begin(); i != seq.end() && i->valid_from_ <= now; ++i) {
+      e = i;
+    }
+    if (e == seq.end() || e->duration_ == n::footpath::kMaxDuration) {
+      continue;
+    }
+    auto const arr = now + e->duration_;
+    if (!best.has_value() || arr < *best) {
+      best = arr;
+    }
+  }
+  return best;
+}
+
+std::optional<n::unixtime_t> scan_arrival(
+    std::vector<n::routing::td_offset> const& offsets, int const dep) {
+  auto const r = n::get_td_duration_scan<n::direction::kForward>(
+      std::span<n::routing::td_offset const>{offsets}, t(dep));
+  return r.has_value() ? std::optional{t(dep) + r->first} : std::nullopt;
+}
+
+
+// Backward alpha_tilde: to a given arrival deadline, the LATEST departure that
+// still meets it (Primitive-Formeln.md: "Sie liefert zu einer gegebenen
+// Ankunftszeit die spaeteste Abfahrt, mit der diese noch eingehalten wird").
+// Returned as a duration, i.e. arrival - departure.
+std::optional<n::duration_t> alpha_brute_bwd(
+    std::vector<n::routing::td_offset> const& seq,
+    int const arr,
+    int const horizon) {
+  auto best = std::optional<n::duration_t>{};
+  for (auto m = 0; m <= horizon; ++m) {
+    auto const dep = t(m);
+    auto e = seq.end();
+    for (auto i = seq.begin(); i != seq.end() && i->valid_from_ <= dep; ++i) {
+      e = i;
+    }
+    if (e == seq.end() || e->duration_ == n::footpath::kMaxDuration) {
+      continue;
+    }
+    if (dep + e->duration_ > t(arr)) {
+      continue;  // misses the deadline
+    }
+    auto const d = t(arr) - dep;          // waiting at the destination counts
+    if (!best.has_value() || d < *best) {  // latest departure == smallest span
+      best = d;
+    }
+  }
+  return best;
+}
+
+std::optional<n::duration_t> fast_bwd(
+    std::vector<n::routing::td_offset> const& seq, int const arr) {
+  auto const r = n::get_td_duration<n::direction::kBackward>(
+      std::span<n::routing::td_offset const>{seq}, t(arr));
+  return r.has_value() ? std::optional{r->first} : std::nullopt;
+}
+
+std::optional<n::duration_t> scan_bwd(
+    std::vector<n::routing::td_offset> const& seq, int const arr) {
+  auto const r = n::get_td_duration_scan<n::direction::kBackward>(
+      std::span<n::routing::td_offset const>{seq}, t(arr));
+  return r.has_value() ? std::optional{r->first} : std::nullopt;
 }
 
 }  // namespace
@@ -422,4 +502,164 @@ TEST(motis, td_offsets_fifo_repair_can_be_disabled) {
     EXPECT_GE(*cur, *prev) << "at minute " << dep;
     prev = cur;
   }
+}
+
+// Property test: on random producer-built sequences, both evaluation paths must
+// reproduce alpha_tilde from Definition 2.
+//   * normalized sequence + get_td_duration  (the first-match fast path)
+//   * raw sequence        + get_td_duration_scan (the ablation path)
+// A failure here localises the discrepancy that end-to-end runs only show as
+// differing itineraries.
+TEST(motis, td_offsets_property_alpha_tilde) {
+  // Losslessness, exactly as Primitive-Formeln.md states it:
+  //     alpha_merged(tau) == min_j alpha_provider_j(tau)   for all tau
+  //
+  // Each provider gets DISJOINT windows in ascending order, because
+  // add_td_window's contract requires windows sorted by mode and by `from`,
+  // with equal durations where windows of one mode overlap. Competition
+  // between providers -- the case the envelope exists for -- is modelled by
+  // letting different modes overlap freely.
+  auto rng = std::mt19937{42};
+  auto n_provider = std::uniform_int_distribution<int>{1, 3};
+  auto n_win = std::uniform_int_distribution<int>{1, 4};
+  auto gap = std::uniform_int_distribution<int>{0, 120};
+  auto len = std::uniform_int_distribution<int>{5, 180};
+  auto dur = std::uniform_int_distribution<int>{1, 200};
+
+  auto const horizon = 3000;
+  auto lossy = 0, cases = 0, worse = 0, better = 0;
+  auto worst_gap = 0;
+  auto naive_wrong = 0, naive_gap = 0, scan_wrong = 0;
+
+  for (auto iter = 0; iter != 3000; ++iter) {
+    auto per_provider = std::vector<std::vector<n::routing::td_offset>>{};
+    auto merged = std::vector<n::routing::td_offset>{};
+    auto const q = n_provider(rng);
+    for (auto j = 0; j != q; ++j) {
+      auto const mode = flex_payload(static_cast<std::uint32_t>(j + 1), 0,
+                                     osr::direction::kForward);
+      auto own = std::vector<n::routing::td_offset>{};
+      auto cursor = gap(rng);
+      for (auto w = 0, nw = n_win(rng); w != nw; ++w) {
+        auto const from = cursor;
+        auto const to = from + len(rng);
+        auto const d = n::duration_t{dur(rng)};
+        motis::add_td_window(own, n::interval{t(from), t(to)}, d, {.payload_ = mode});
+        motis::add_td_window(merged, n::interval{t(from), t(to)}, d, {.payload_ = mode});
+        cursor = to + gap(rng);
+      }
+      if (!own.empty()) {
+        per_provider.push_back(std::move(own));
+      }
+    }
+    if (merged.empty() || per_provider.empty()) {
+      continue;
+    }
+    auto normalized = merged;
+    motis::normalize_td_offsets(normalized);
+
+    for (auto dep = 0; dep <= 900; dep += 29) {
+      ++cases;
+      auto expect = std::optional<n::unixtime_t>{};
+      for (auto const& seq : per_provider) {
+        auto const a = alpha_brute(seq, dep, horizon);
+        if (a.has_value() && (!expect.has_value() || *a < *expect)) {
+          expect = a;
+        }
+      }
+      auto const got = arrival(normalized, dep);
+      // The ablation path must agree with the fast path on the same sequence:
+      // both evaluate the identical normal form, so any difference is a bug in
+      // the scan rather than a property of normalization.
+      // With (N1) established (step 2 on) the first-match fast path must equal
+      // the exhaustive scan. With step 2 disabled it need not -- and the rate
+      // and size of the disagreement is what FIFO repair buys.
+      auto const by_scan = scan_arrival(normalized, dep);
+      if (by_scan != expect) {
+        ++scan_wrong;  // does the exhaustive lookup alone restore correctness?
+      }
+      if (by_scan != got) {
+        ++naive_wrong;
+        if (by_scan.has_value() && got.has_value()) {
+          naive_gap = std::max(naive_gap, static_cast<int>((*got - *by_scan).count()));
+        }
+      }
+      if (got != expect) {
+        ++lossy;
+        if (expect.has_value() && got.has_value()) {
+          auto const g = static_cast<int>((*got - *expect).count());
+          if (g > 0) { ++worse; worst_gap = std::max(worst_gap, g); }
+          else { ++better; }
+        } else if (!got.has_value()) {
+          ++worse;
+        } else {
+          ++better;
+        }
+        if (lossy <= 3) {
+          ADD_FAILURE() << "dep=" << dep
+                        << " expected=" << (expect ? std::to_string(expect->time_since_epoch().count()) : "none")
+                        << " got=" << (got ? std::to_string(got->time_since_epoch().count()) : "none");
+        }
+      }
+    }
+  }
+  std::cout << "exhaustive scan != lossless reference: " << scan_wrong << "/"
+            << cases << std::endl;
+  std::cout << "fast-path != exhaustive scan: " << naive_wrong << "/" << cases
+            << " (worst " << naive_gap << " min too late)" << std::endl;
+  std::cout << "cases=" << cases << " mismatches=" << lossy
+            << " (normalized later=" << worse << ", earlier=" << better
+            << ", worst_gap=" << worst_gap << " min)" << std::endl;
+}
+
+// Same property, backward direction. The forward test showed the scan is a
+// valid oracle there; this checks the mirror branch, which the search also
+// uses and which was never covered.
+TEST(motis, td_offsets_property_alpha_tilde_backward) {
+  auto rng = std::mt19937{7};
+  auto n_provider = std::uniform_int_distribution<int>{1, 3};
+  auto n_win = std::uniform_int_distribution<int>{1, 4};
+  auto gap = std::uniform_int_distribution<int>{0, 120};
+  auto len = std::uniform_int_distribution<int>{5, 180};
+  auto dur = std::uniform_int_distribution<int>{1, 200};
+  auto const horizon = 3000;
+  auto fast_wrong = 0, scan_wrong = 0, cases = 0;
+
+  for (auto iter = 0; iter != 2000; ++iter) {
+    auto per_provider = std::vector<std::vector<n::routing::td_offset>>{};
+    auto merged = std::vector<n::routing::td_offset>{};
+    for (auto j = 0, q = n_provider(rng); j != q; ++j) {
+      auto const mode = flex_payload(static_cast<std::uint32_t>(j + 1), 0,
+                                     osr::direction::kForward);
+      auto own = std::vector<n::routing::td_offset>{};
+      auto cursor = gap(rng);
+      for (auto w = 0, nw = n_win(rng); w != nw; ++w) {
+        auto const from = cursor, to = from + len(rng);
+        auto const d = n::duration_t{dur(rng)};
+        motis::add_td_window(own, n::interval{t(from), t(to)}, d, {.payload_ = mode});
+        motis::add_td_window(merged, n::interval{t(from), t(to)}, d, {.payload_ = mode});
+        cursor = to + gap(rng);
+      }
+      if (!own.empty()) per_provider.push_back(std::move(own));
+    }
+    if (merged.empty() || per_provider.empty()) continue;
+    auto normalized = merged;
+    motis::normalize_td_offsets(normalized);
+
+    for (auto arr = 60; arr <= 900; arr += 31) {
+      ++cases;
+      auto expect = std::optional<n::duration_t>{};
+      for (auto const& seq : per_provider) {
+        auto const a = alpha_brute_bwd(seq, arr, horizon);
+        if (a.has_value() && (!expect.has_value() || *a < *expect)) expect = a;
+      }
+      if (fast_bwd(normalized, arr) != expect) ++fast_wrong;
+      if (scan_bwd(normalized, arr) != expect) ++scan_wrong;
+    }
+  }
+  std::cout << "BACKWARD cases=" << cases
+            << " fast_path_wrong=" << fast_wrong
+            << " scan_wrong=" << scan_wrong << std::endl;
+  EXPECT_EQ(0, fast_wrong);
+  EXPECT_EQ(0, scan_wrong);
 }
