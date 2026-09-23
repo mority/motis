@@ -6,11 +6,13 @@
 #include <random>
 #include <iostream>
 #include <span>
+#include <string>
 #include <vector>
 
 #include "nigiri/footpath.h"
 #include "nigiri/td_footpath.h"
 
+#include "motis/endpoints/routing.h"
 #include "motis/flex/mode_payload.h"
 #include "motis/td_offsets.h"
 
@@ -733,4 +735,72 @@ TEST(motis, td_offsets_property_raw_windows) {
             << " bwd_wrong=" << bwd_wrong << std::endl;
   EXPECT_EQ(0, fwd_wrong);
   EXPECT_EQ(0, bwd_wrong);
+}
+
+// remove_slower_than_fastest_direct erases single entries from td_start_. On
+// the normal form an entry is valid until the NEXT entry, so erasing one
+// stretches its predecessor over the erased span: with touching windows
+//     [10: 5 min, A] [20: 100 min, B] [30: end]
+// pruning the 100-min entry leaves the 5-min offer of A valid until 30, an
+// offer nobody published. Pruning may only take options away; it must never
+// yield an arrival earlier than the unpruned sequence does. Design D's raw
+// pairs are checked alongside: there, erasing a start orphans its closer.
+TEST(motis, td_offsets_pruning_does_not_stretch_windows) {
+  auto const a = flex_payload(1U, 0U, osr::direction::kForward);
+  auto const b = flex_payload(2U, 0U, osr::direction::kForward);
+  auto const l = n::location_idx_t{7U};
+
+  auto const prune = [&](std::vector<n::routing::td_offset> offsets) {
+    auto q = n::routing::query{};
+    q.fastest_direct_ = n::duration_t{50};
+    // destination reachable in 0 min, so every start offset of >= 50 min loses
+    // against the direct connection and is erased
+    q.destination_.emplace_back(n::location_idx_t{8U}, n::duration_t{0}, 0U);
+    q.td_start_[l] = std::move(offsets);
+    motis::ep::remove_slower_than_fastest_direct(q);
+    return q.td_start_.at(l);
+  };
+
+  auto const offers = {offer{10, 20, n::duration_t{5}, a},
+                       offer{20, 30, n::duration_t{100}, b}};
+
+  auto normalized = raw(offers);
+  motis::normalize_td_offsets(normalized, nullptr);
+  auto const normalized_pruned = prune(normalized);
+
+  auto const raw_windows = raw(offers);
+  auto const raw_pruned = prune(raw_windows);
+  auto const raw_arrival = [](std::vector<n::routing::td_offset> const& v,
+                              int const dep) {
+    auto const r = n::get_td_duration_raw_windows<n::direction::kForward>(
+        std::span<n::routing::td_offset const>{v}, t(dep));
+    return r.has_value() ? std::optional{t(dep) + r->first} : std::nullopt;
+  };
+
+  // true if `pruned` offers an arrival the unpruned sequence cannot reach
+  auto const invents = [](std::optional<n::unixtime_t> const pruned,
+                          std::optional<n::unixtime_t> const unpruned) {
+    return pruned.has_value() &&
+           (!unpruned.has_value() || *pruned < *unpruned);
+  };
+
+  auto normalized_wrong = 0, raw_wrong = 0;
+  for (auto dep = 0; dep <= 40; ++dep) {
+    auto const want = arrival(normalized, dep);
+    auto const got = arrival(normalized_pruned, dep);
+    if (invents(got, want)) {
+      ++normalized_wrong;
+      std::cout << "  normal form: dep=" << dep << " unpruned="
+                << (want ? std::to_string(want->time_since_epoch().count())
+                         : std::string{"none"})
+                << " pruned=" << got->time_since_epoch().count() << "\n";
+    }
+    if (invents(raw_arrival(raw_pruned, dep), raw_arrival(raw_windows, dep))) {
+      ++raw_wrong;
+    }
+  }
+  std::cout << "PRUNING normal_form_wrong=" << normalized_wrong
+            << " raw_wrong=" << raw_wrong << std::endl;
+  EXPECT_EQ(0, normalized_wrong);
+  EXPECT_EQ(0, raw_wrong);
 }
