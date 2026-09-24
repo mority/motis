@@ -267,6 +267,67 @@ bool is_in_flex_stop(n::timetable const& tt,
       }});
 }
 
+namespace {
+
+// The stops that can get a flex path from `pos`: a ride ends at a street node
+// inside an area (or at a location group stop), then the car_sharing profile
+// may still walk for the rest of the budget -- and it accepts a destination in
+// the foot state the search starts in, so stops within walking distance of
+// `pos` count as well. Backward, start and end roles follow real time order,
+// so all areas / groups of a stop sequence are taken, not only the ones after
+// the boarding stop. `margin` has to cover that walk plus the matching.
+struct flex_targets {
+  bool contains(n::location_idx_t const l, geo::latlng const& p) const {
+    return near_stops_.contains(l) ||
+           utl::any_of(area_boxes_,
+                       [&](geo::box const& b) { return b.contains(p); });
+  }
+
+  std::vector<geo::box> area_boxes_;
+  hash_set<n::location_idx_t> near_stops_;
+};
+
+flex_targets get_flex_targets(n::timetable const& tt,
+                              point_rtree<n::location_idx_t> const& loc_rtree,
+                              flex_routings_t const& routings,
+                              geo::latlng const& pos,
+                              double const margin) {
+  auto t = flex_targets{};
+  auto const add_near = [&](geo::latlng const& x) {
+    loc_rtree.in_radius(x, margin, [&](n::location_idx_t const l) {
+      t.near_stops_.emplace(l);
+      return true;
+    });
+  };
+  add_near(pos);
+
+  auto areas = hash_set<n::flex_area_idx_t>{};
+  auto groups = hash_set<n::location_group_idx_t>{};
+  for (auto const& [key, transports] : routings) {
+    for (auto const& stop : tt.flex_stop_seq_[key.first]) {
+      stop.apply(utl::overloaded{[&](n::flex_area_idx_t const a) {
+                                   if (areas.emplace(a).second) {
+                                     auto const& bb = tt.flex_area_bbox_[a];
+                                     auto b = geo::box{bb.min_, margin};
+                                     b.extend(geo::box{bb.max_, margin});
+                                     t.area_boxes_.push_back(b);
+                                   }
+                                 },
+                                 [&](n::location_group_idx_t const lg) {
+                                   if (groups.emplace(lg).second) {
+                                     for (auto const l :
+                                          tt.location_group_locations_[lg]) {
+                                       add_near(tt.locations_.coordinates_[l]);
+                                     }
+                                   }
+                                 }});
+    }
+  }
+  return t;
+}
+
+}  // namespace
+
 void add_flex_td_offsets(osr::ways const& w,
                          osr::lookup const& lookup,
                          osr::platforms const* pl,
@@ -287,13 +348,32 @@ void add_flex_td_offsets(osr::ways const& w,
                          one_to_many_side* const states) {
   UTL_START_TIMING(flex_lookup_timer);
 
+  auto const routings = get_flex_routings(tt, loc_rtree, start_time, pos.pos_,
+                                          dir, max, osr_params);
+  if (routings.empty()) {
+    stats.emplace(fmt::format("prepare_{}_FLEX_lookup", to_str(dir)),
+                  UTL_GET_TIMING_MS(flex_lookup_timer));
+    return;
+  }
+
+  // Match only the stops a flex ride can reach, not every stop within an
+  // hour's drive: street matching dominates the preparation otherwise.
+  auto const targets = get_flex_targets(
+      tt, loc_rtree, routings, pos.pos_,
+      get_max_distance(osr::search_profile::kFoot, osr_params, max) +
+          max_matching_distance + kMaxGbfsMatchingDistance + 50.0);
   auto const max_dist =
       get_max_distance(osr::search_profile::kCarSharing, osr_params, max);
-  auto const near_stops = loc_rtree.in_radius(pos.pos_, max_dist);
-  auto const near_stop_locations =
-      utl::to_vec(near_stops, [&](n::location_idx_t const l) {
-        return get_location(&tt, &w, pl, matches, tt_location{l});
-      });
+  auto near_stops = std::vector<n::location_idx_t>{};
+  auto near_stop_locations = std::vector<osr::location>{};
+  loc_rtree.in_radius(pos.pos_, max_dist, [&](n::location_idx_t const l) {
+    auto const loc = get_location(&tt, &w, pl, matches, tt_location{l});
+    if (targets.contains(l, loc.pos_)) {
+      near_stops.push_back(l);
+      near_stop_locations.push_back(loc);
+    }
+    return true;
+  });
 
   auto const params =
       to_profile_parameters(osr::search_profile::kCarSharing, osr_params);
@@ -303,9 +383,6 @@ void add_flex_td_offsets(osr::ways const& w,
   auto const near_stop_matches = get_reverse_platform_way_matches(
       lookup, way_matches, osr::search_profile::kCarSharing, near_stops,
       near_stop_locations, dir, max_matching_distance);
-
-  auto const routings = get_flex_routings(tt, loc_rtree, start_time, pos.pos_,
-                                          dir, max, osr_params);
 
   stats.emplace(fmt::format("prepare_{}_FLEX_lookup", to_str(dir)),
                 UTL_GET_TIMING_MS(flex_lookup_timer));
