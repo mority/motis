@@ -9,6 +9,10 @@
 
 #include "nigiri/types.h"
 
+namespace motis {
+struct td_trace_window;
+}  // namespace motis
+
 namespace motis::flex {
 
 struct flex_additional_nodes {
@@ -52,6 +56,10 @@ struct flex_routing_data {
   osr::bitvec<osr::node_idx_t> through_allowed_;
   osr::bitvec<osr::node_idx_t> end_allowed_;
   flex_additional_nodes additional_nodes_;
+
+  // set only while tracing (MOTIS_TD_TRACE): receives every window before
+  // add_td_window merges it
+  std::vector<td_trace_window>* td_windows_{nullptr};
 };
 
 }  // namespace motis::flex

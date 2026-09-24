@@ -1,8 +1,10 @@
 #include "motis/flex/flex.h"
 
+#include <cstdlib>
 #include <memory>
 #include <optional>
 #include <ranges>
+#include <string_view>
 
 #include "utl/concat.h"
 #include "utl/enumerate.h"
@@ -23,6 +25,7 @@
 #include "motis/osr/max_distance.h"
 #include "motis/osr/one_to_many_searches.h"
 #include "motis/td_offsets.h"
+#include "motis/td_trace.h"
 
 namespace n = nigiri;
 
@@ -268,6 +271,81 @@ bool is_in_flex_stop(n::timetable const& tt,
       }});
 }
 
+// MOTIS_FLEX_NARROW=1 (experiment, default off): look up the flex offers
+// first and skip everything if there are none; otherwise match only the stops
+// a flex ride can end at, instead of every stop within one hour's drive.
+bool flex_narrow_lookup() {
+  static auto const v = [] {
+    auto const* const e = std::getenv("MOTIS_FLEX_NARROW");
+    return e != nullptr && std::string_view{e} == "1";
+  }();
+  return v;
+}
+
+// Where the flex rides of `routings` can end: bounding boxes of the target
+// areas and the stops near target location-group stops, both widened by
+// `margin`. The ride ends at a street node inside the area (or at a group
+// stop's extra node); after that the car_sharing profile may still walk
+// (kTrailingFoot) for the rest of the budget, and a stop is reached through
+// its matched street nodes. With `margin` covering a walk over the whole
+// budget plus both matching distances, every stop that can get a path lies
+// within this superset. car_sharing also accepts a destination in the foot
+// state the search starts in (is_dest_reachable: any non-rental node), i.e. a
+// walk without a ride, so the stops around the query position belong to it too.
+struct flex_targets {
+  bool contains(n::location_idx_t const l, geo::latlng const& p) const {
+    return near_stops_.contains(l) ||
+           utl::any_of(area_boxes_,
+                       [&](geo::box const& b) { return b.contains(p); });
+  }
+  std::vector<geo::box> area_boxes_;
+  hash_set<n::location_idx_t> near_stops_;  // group stops, query position
+};
+
+flex_targets get_flex_targets(n::timetable const& tt,
+                              point_rtree<n::location_idx_t> const& loc_rtree,
+                              flex_routings_t const& routings,
+                              geo::latlng const& pos,
+                              double const margin) {
+  auto t = flex_targets{};
+  loc_rtree.in_radius(pos, margin, [&](n::location_idx_t const x) {
+    t.near_stops_.emplace(x);
+    return true;
+  });
+  auto areas = hash_set<n::flex_area_idx_t>{};
+  auto groups = hash_set<n::location_group_idx_t>{};
+  // All zones / groups of the stop sequence, not just the ones after `from`:
+  // measured on the eval set, the backward search also reaches stops around
+  // the sequence's own zone (start/end roles in real-time order), and the
+  // extra stops cost little next to the hundred kilometre radius.
+  for (auto const& [key, transports] : routings) {
+    auto const stops = tt.flex_stop_seq_[key.first];
+    for (auto i = 0U; i != stops.size(); ++i) {
+      stops[static_cast<n::stop_idx_t>(i)].apply(utl::overloaded{
+          [&](n::flex_area_idx_t const a) {
+            if (areas.emplace(a).second) {
+              auto const& bb = tt.flex_area_bbox_[a];
+              auto b = geo::box{bb.min_, margin};
+              b.extend(geo::box{bb.max_, margin});
+              t.area_boxes_.push_back(b);
+            }
+          },
+          [&](n::location_group_idx_t const lg) {
+            if (groups.emplace(lg).second) {
+              for (auto const l : tt.location_group_locations_[lg]) {
+                loc_rtree.in_radius(tt.locations_.coordinates_[l], margin,
+                                    [&](n::location_idx_t const x) {
+                                      t.near_stops_.emplace(x);
+                                      return true;
+                                    });
+              }
+            }
+          }});
+    }
+  }
+  return t;
+}
+
 void add_flex_td_offsets(osr::ways const& w,
                          osr::lookup const& lookup,
                          osr::platforms const* pl,
@@ -288,13 +366,46 @@ void add_flex_td_offsets(osr::ways const& w,
                          one_to_many_side* const states) {
   UTL_START_TIMING(flex_lookup_timer);
 
+  auto const narrow = flex_narrow_lookup();
+  auto routings = flex_routings_t{};
+  if (narrow) {
+    routings = get_flex_routings(tt, loc_rtree, start_time, pos.pos_, dir, max,
+                                 osr_params);
+    if (routings.empty()) {
+      stats.emplace(fmt::format("prepare_{}_FLEX_lookup", to_str(dir)),
+                    UTL_GET_TIMING_MS(flex_lookup_timer));
+      return;
+    }
+  }
+
   auto const max_dist =
       get_max_distance(osr::search_profile::kCarSharing, osr_params, max);
-  auto const near_stops = loc_rtree.in_radius(pos.pos_, max_dist);
-  auto const near_stop_locations =
+  auto near_stops = loc_rtree.in_radius(pos.pos_, max_dist);
+  auto near_stop_locations =
       utl::to_vec(near_stops, [&](n::location_idx_t const l) {
         return get_location(&tt, &w, pl, matches, tt_location{l});
       });
+  stats.emplace(fmt::format("prepare_{}_FLEX_near_stops", to_str(dir)),
+                near_stops.size());
+  if (narrow) {
+    auto const trailing_walk =
+        get_max_distance(osr::search_profile::kFoot, osr_params, max);
+    auto const targets = get_flex_targets(
+        tt, loc_rtree, routings, pos.pos_,
+        trailing_walk + max_matching_distance + kMaxGbfsMatchingDistance + 50.0);
+    auto kept = 0U;
+    for (auto i = 0U; i != near_stops.size(); ++i) {
+      if (targets.contains(near_stops[i], near_stop_locations[i].pos_)) {
+        near_stops[kept] = near_stops[i];
+        near_stop_locations[kept] = near_stop_locations[i];
+        ++kept;
+      }
+    }
+    near_stops.resize(kept);
+    near_stop_locations.resize(kept);
+    stats.emplace(fmt::format("prepare_{}_FLEX_near_stops_kept", to_str(dir)),
+                  kept);
+  }
 
   auto const params =
       to_profile_parameters(osr::search_profile::kCarSharing, osr_params);
@@ -305,8 +416,10 @@ void add_flex_td_offsets(osr::ways const& w,
       lookup, way_matches, osr::search_profile::kCarSharing, near_stops,
       near_stop_locations, dir, max_matching_distance);
 
-  auto const routings = get_flex_routings(tt, loc_rtree, start_time, pos.pos_,
-                                          dir, max, osr_params);
+  if (!narrow) {
+    routings = get_flex_routings(tt, loc_rtree, start_time, pos.pos_, dir, max,
+                                 osr_params);
+  }
 
   stats.emplace(fmt::format("prepare_{}_FLEX_lookup", to_str(dir)),
                 UTL_GET_TIMING_MS(flex_lookup_timer));
@@ -388,9 +501,18 @@ void add_flex_td_offsets(osr::ways const& w,
 
             if (iv_at_from_stop.from_ < iv_at_from_stop.to_ &&
                 duration < n::footpath::kMaxDuration) {
-              add_td_window(
-                  ret[l], iv_at_from_stop, duration,
-                  transport_mode(api::ModeEnum::FLEX, id.to_payload()));
+              auto const mode =
+                  transport_mode(api::ModeEnum::FLEX, id.to_payload());
+              if (frd.td_windows_ != nullptr) {
+                frd.td_windows_->push_back(
+                    {.location_ = l,
+                     .dir_ = static_cast<std::uint8_t>(dir),
+                     .from_ = iv_at_from_stop.from_,
+                     .to_ = iv_at_from_stop.to_,
+                     .duration_ = duration,
+                     .mode_ = mode});
+              }
+              add_td_window(ret[l], iv_at_from_stop, duration, mode);
             }
           }
         }

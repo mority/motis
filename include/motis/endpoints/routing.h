@@ -23,6 +23,10 @@
 #include "motis/place.h"
 #include "motis/rental_options.h"
 
+namespace motis {
+struct td_trace_window;
+}  // namespace motis
+
 namespace motis::ep {
 
 constexpr auto const kInfinityDuration =
@@ -95,7 +99,8 @@ struct routing {
                  std::chrono::seconds max,
                  nigiri::routing::start_time_t const&,
                  stats_map_t& stats,
-                 one_to_many_side* = nullptr) const;
+                 one_to_many_side* = nullptr,
+                 std::vector<td_trace_window>* td_windows = nullptr) const;
 
   std::pair<std::vector<api::Itinerary>, nigiri::duration_t> route_direct(
       elevators const*,

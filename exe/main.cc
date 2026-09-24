@@ -41,6 +41,7 @@ int batch(int, char**);
 int compare(int, char**);
 int extract(int, char**);
 int params(int, char**);
+int td_replay(int, char**);
 }  // namespace motis
 
 using namespace motis;
@@ -58,6 +59,7 @@ int main(int ac, char** av) {
         "  batch      run queries from a file\n"
         "  params     update query parameters for a batch file\n"
         "  compare    compare results from different batch runs\n"
+        "  td-replay  replay recorded time-dependent offset lookups\n"
         "  config     generate a config file from a list of input files\n"
         "  import     prepare input data, creates the data directory\n"
         "  server     starts a web server serving the API\n"
@@ -86,6 +88,7 @@ int main(int ac, char** av) {
     case cista::hash("params"): return_value = params(ac, av); break;
     case cista::hash("batch"): return_value = batch(ac, av); break;
     case cista::hash("compare"): return_value = compare(ac, av); break;
+    case cista::hash("td-replay"): return_value = td_replay(ac, av); break;
 
     case cista::hash("config"): {
       auto paths = std::vector<std::string>{};

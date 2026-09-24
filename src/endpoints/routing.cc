@@ -69,6 +69,7 @@
 #include "motis/server.h"
 #include "motis/tag_lookup.h"
 #include "motis/td_offsets.h"
+#include "motis/td_trace.h"
 #include "motis/timetable/modes_to_clasz_mask.h"
 #include "motis/timetable/time_conv.h"
 #include "motis/update_rtt_td_footpaths.h"
@@ -154,7 +155,8 @@ n::routing::td_offsets_t get_td_offsets(
     std::chrono::seconds const max,
     nigiri::routing::start_time_t const& start_time,
     stats_map_t& stats,
-    one_to_many_side* const states) {
+    one_to_many_side* const states,
+    std::vector<td_trace_window>* const td_windows) {
   if (!r.is_osr_loaded()) {
     return {};
   }
@@ -167,6 +169,7 @@ n::routing::td_offsets_t get_td_offsets(
       UTL_START_TIMING(flex_timer);
       utl::verify(r.fa_, "FLEX areas not loaded");
       auto frd = flex::flex_routing_data{};
+      frd.td_windows_ = td_windows;
       flex::add_flex_td_offsets(*r.w_, *r.l_, r.pl_, r.matches_, r.way_matches_,
                                 *r.tt_, *r.fa_, *r.loc_tree_, start_time, pos,
                                 dir, max, max_matching_distance, osr_params,
@@ -226,7 +229,8 @@ n::routing::td_offsets_t routing::get_td_offsets(
     std::chrono::seconds const max,
     nigiri::routing::start_time_t const& start_time,
     stats_map_t& stats,
-    one_to_many_side* const states) const {
+    one_to_many_side* const states,
+    std::vector<td_trace_window>* const td_windows) const {
   return std::visit(
       utl::overloaded{
           [&](tt_location l) {
@@ -236,13 +240,14 @@ n::routing::td_offsets_t routing::get_td_offsets(
             return ::motis::ep::get_td_offsets(
                 *this, rtt, e, stop_to_osr_location(*this, l.l_), dir, modes,
                 osr_params, pedestrian_profile, elevation_costs,
-                max_matching_distance, max, start_time, stats, states);
+                max_matching_distance, max, start_time, stats, states,
+                td_windows);
           },
           [&](osr::location const& pos) {
             return ::motis::ep::get_td_offsets(
                 *this, rtt, e, pos, dir, modes, osr_params, pedestrian_profile,
                 elevation_costs, max_matching_distance, max, start_time, stats,
-                states);
+                states, td_windows);
           }},
       p);
 }
@@ -1040,6 +1045,14 @@ api::plan_response routing::route(api::plan_params const& query,
     auto const use_radius_dest = query.radius_.has_value() &&
                                  std::holds_alternative<osr::location>(dest);
 
+    auto trace = std::optional<td_trace>{};
+    if (td_trace::dir().has_value()) {
+      trace.emplace();
+      trace->url_ = fmt::format("{}|{}", query.fromPlace_, query.toPlace_);
+      trace->arrive_by_ = query.arriveBy_;
+    }
+    auto* const td_windows = trace.has_value() ? &trace->windows_ : nullptr;
+
     auto q = n::routing::query{
         .start_time_ = start_time.start_time_,
         .start_match_mode_ =
@@ -1097,7 +1110,7 @@ api::plan_response routing::route(api::plan_params const& query,
             start_modes, osr_params, query.pedestrianProfile_,
             query.elevationCosts_, max_matching_distance,
             query.arriveBy_ ? post_transit_time : pre_transit_time,
-            start_time.start_time_, prepare_stats, otm_start),
+            start_time.start_time_, prepare_stats, otm_start, td_windows),
         .td_dest_ = get_td_offsets(
             rtt, e, dest,
             query.arriveBy_ ? osr::direction::kForward
@@ -1105,7 +1118,7 @@ api::plan_response routing::route(api::plan_params const& query,
             dest_modes, osr_params, query.pedestrianProfile_,
             query.elevationCosts_, max_matching_distance,
             query.arriveBy_ ? pre_transit_time : post_transit_time,
-            start_time.start_time_, prepare_stats, otm_dest),
+            start_time.start_time_, prepare_stats, otm_dest, td_windows),
         .max_transfers_ = static_cast<std::uint8_t>(max_transfers),
         .max_travel_time_ = query.maxTravelTime_
                                 .and_then([](std::int64_t const dur) {
@@ -1144,7 +1157,13 @@ api::plan_response routing::route(api::plan_params const& query,
         .fastest_direct_factor_ = query.fastestDirectFactor_,
         .slow_direct_ = query.slowDirect_,
         .fastest_slow_direct_factor_ = query.fastestSlowDirectFactor_};
+    if (trace.has_value()) {
+      trace->capture_before_pruning(q);
+    }
     remove_slower_than_fastest_direct(q);
+    if (trace.has_value()) {
+      trace->capture_query(q);
+    }
     UTL_STOP_TIMING(query_preparation);
 
     if (tt_->locations_.footpaths_out_.at(q.prf_idx_).empty()) {
@@ -1204,16 +1223,48 @@ api::plan_response routing::route(api::plan_params const& query,
 #endif
 
       if (algorithm == api::algorithmEnum::PONG && pong_applicable) {
+#ifdef NIGIRI_TD_TRACE
+        // Kept so a PONG exception can fall back to RAPTOR on the original.
+        auto q_rest = std::optional<n::routing::query>{};
+#endif
         try {
           auto raptor_state = n::routing::raptor_state{};
-          r = n::routing::pong_search(
-              *tt_, rtt, search_state, raptor_state, q,
-              query.arriveBy_ ? n::direction::kBackward
-                              : n::direction::kForward,
-              query.timeout_.has_value() ? std::chrono::seconds{*query.timeout_}
-                                         : max_timeout);
+          auto const search_dir = query.arriveBy_ ? n::direction::kBackward
+                                                  : n::direction::kForward;
+          auto const timeout = query.timeout_.has_value()
+                                   ? std::chrono::seconds{*query.timeout_}
+                                   : max_timeout;
+#ifdef NIGIRI_TD_TRACE
+          if (trace.has_value()) {
+            // Moved, not copied: lookups are matched to the addresses that
+            // capture_query registered.
+            q_rest = q;
+            {
+              auto const scope = td_trace_scope{*trace};
+              r = n::routing::pong_search(*tt_, rtt, search_state,
+                                          raptor_state, std::move(q),
+                                          search_dir, timeout);
+            }
+            q = std::move(*q_rest);
+            break;
+          }
+#endif
+          r = n::routing::pong_search(*tt_, rtt, search_state, raptor_state, q,
+                                      search_dir, timeout);
         } catch (std::exception const& e) {
           std::cout << "PONG EXCEPTION: " << e.what() << "\n";
+#ifdef NIGIRI_TD_TRACE
+          if (q_rest.has_value()) {
+            // the moved-from query is unusable: restore it and drop the
+            // lookups recorded by the failed attempt
+            q = std::move(*q_rest);
+            trace->lookups_.clear();
+            trace->n_unmatched_ = 0U;
+            trace->seqs_.clear();
+            trace->by_address_.clear();
+            trace->capture_query(q);
+          }
+#endif
           algorithm = api::algorithmEnum::RAPTOR;
           continue;
         }
@@ -1226,16 +1277,37 @@ api::plan_response routing::route(api::plan_params const& query,
                  q.require_bike_transport_ || q.require_car_transport_ ||
                  q.no_compulsory_reservation_) {
         auto raptor_state = n::routing::raptor_state{};
-        r = n::routing::raptor_search(
-            *tt_, rtt, search_state, raptor_state, q,
-            query.arriveBy_ ? n::direction::kBackward : n::direction::kForward,
-            query.timeout_.has_value() ? std::chrono::seconds{*query.timeout_}
-                                       : max_timeout);
+        auto const search_dir =
+            query.arriveBy_ ? n::direction::kBackward : n::direction::kForward;
+        auto const timeout = query.timeout_.has_value()
+                                 ? std::chrono::seconds{*query.timeout_}
+                                 : max_timeout;
+#ifdef NIGIRI_TD_TRACE
+        if (trace.has_value()) {
+          // Moved, not copied: lookups are matched to the addresses that
+          // capture_query registered.
+          auto q_rest = q;
+          {
+            auto const scope = td_trace_scope{*trace};
+            r = n::routing::raptor_search(*tt_, rtt, search_state,
+                                          raptor_state, std::move(q),
+                                          search_dir, timeout);
+          }
+          q = std::move(q_rest);
+          break;
+        }
+#endif
+        r = n::routing::raptor_search(*tt_, rtt, search_state, raptor_state, q,
+                                      search_dir, timeout);
       } else {
         auto tb_state = n::routing::tb::query_state{*tt_, *tbd_};
         r = n::routing::tb::tb_search(*tt_, search_state, tb_state, q);
       }
       break;
+    }
+
+    if (trace.has_value()) {
+      trace->write(*td_trace::dir());
     }
 
     // record the algorithm that actually ran (after any fallbacks)
