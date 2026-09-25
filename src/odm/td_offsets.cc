@@ -14,7 +14,7 @@ std::pair<nr::td_offsets_t, nr::td_offsets_t> get_td_offsets_split(
     std::vector<nr::offset> const& offsets,
     std::vector<service_times_t> const& times,
     transport_mode_t const mode,
-    td_norm_stats* const norm_stats) {
+    td_norm_stats* const) {
   auto const split =
       offsets.empty()
           ? 0
@@ -45,7 +45,6 @@ std::pair<nr::td_offsets_t, nr::td_offsets_t> get_td_offsets_split(
           add_td_window(tdos, departures, o.duration_, mode);
         }
       }
-      normalize_td_offsets(tdos, norm_stats);
     }
     return td_offsets;
   };

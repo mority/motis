@@ -204,14 +204,15 @@ n::routing::td_offsets_t get_td_offsets(
             offsets.push_back(n::routing::td_offset::make(it->valid_from_,
                                                           it->duration_, mode));
           }
+          // No normalization: nigiri's lookup reads every finite entry as
+          // valid until the next element. Close an open-ended last step, so
+          // windows appended later for this location do not cut it short.
+          if (offsets.back().duration_ < n::footpath::kMaxDuration) {
+            offsets.push_back(n::routing::td_offset::make(
+                n::unixtime_t::max(), n::footpath::kMaxDuration, mode));
+          }
         });
   }
-
-  auto norm_stats = td_norm_stats{};
-  for (auto& [l, location_offsets] : ret) {
-    normalize_td_offsets(location_offsets, &norm_stats);
-  }
-  norm_stats.write(stats, fmt::format("td_norm_{}", to_str(dir)));
 
   return ret;
 }

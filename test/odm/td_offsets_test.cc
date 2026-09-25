@@ -437,17 +437,16 @@ td_offset taxi_ride(unixtime_t const from) {
   return td_offset::make(from, 20min, kOdmTransportMode);
 }
 
-// Normalization leaves the gaps without a mode.
-td_offset no_ride(unixtime_t const from) {
-  return td_offset{from, footpath::kMaxDuration};
+// End of a departure window, as add_td_window emits it (no normalization).
+td_offset window_end(unixtime_t const from) {
+  return td_offset::make(from, footpath::kMaxDuration, kOdmTransportMode);
 }
 
 TEST(odm, get_td_offsets_split_basic) {
   // Service 10:00-11:00: the ride has to end by 11:00, so the last departure
-  // is 10:40 and the offset ends at 10:41. Normalization prepends the gap from
-  // the beginning of time.
-  EXPECT_EQ((std::vector{no_ride(unixtime_t{0h}), taxi_ride(unixtime_t{10h}),
-                         no_ride(unixtime_t{10h + 41min})}),
+  // is 10:40 and the window ends at 10:41.
+  EXPECT_EQ((std::vector{taxi_ride(unixtime_t{10h}),
+                         window_end(unixtime_t{10h + 41min})}),
             taxi_td_offsets({{unixtime_t{10h}, unixtime_t{11h}}}));
 }
 
@@ -460,8 +459,8 @@ TEST(odm, get_td_offsets_split_too_short) {
 TEST(odm, get_td_offsets_split_overlapping) {
   // Departure windows [10:00, 10:41) and [10:30, 11:41) overlap and are
   // merged, so the offset does not end at 10:41.
-  EXPECT_EQ((std::vector{no_ride(unixtime_t{0h}), taxi_ride(unixtime_t{10h}),
-                         no_ride(unixtime_t{11h + 41min})}),
+  EXPECT_EQ((std::vector{taxi_ride(unixtime_t{10h}),
+                         window_end(unixtime_t{11h + 41min})}),
             taxi_td_offsets({{unixtime_t{10h}, unixtime_t{11h}},
                              {unixtime_t{10h + 30min}, unixtime_t{12h}}}));
 }
@@ -469,9 +468,9 @@ TEST(odm, get_td_offsets_split_overlapping) {
 TEST(odm, get_td_offsets_split_gap) {
   // Two service times far apart stay two separate windows.
   EXPECT_EQ(
-      (std::vector{no_ride(unixtime_t{0h}), taxi_ride(unixtime_t{10h}),
-                   no_ride(unixtime_t{10h + 41min}), taxi_ride(unixtime_t{12h}),
-                   no_ride(unixtime_t{12h + 41min})}),
+      (std::vector{taxi_ride(unixtime_t{10h}),
+                   window_end(unixtime_t{10h + 41min}), taxi_ride(unixtime_t{12h}),
+                   window_end(unixtime_t{12h + 41min})}),
       taxi_td_offsets({{unixtime_t{10h}, unixtime_t{11h}},
                        {unixtime_t{12h}, unixtime_t{13h}}}));
 }

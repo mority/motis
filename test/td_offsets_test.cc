@@ -480,48 +480,6 @@ TEST(motis, td_offsets_stats_accumulate_over_locations) {
   EXPECT_EQ(first.size() + second.size(), stats.n_out_);
 }
 
-TEST(motis, td_offsets_fifo_repair_can_be_disabled) {
-  auto const slow = flex_payload(1U, 0U, osr::direction::kBackward);
-  auto const fast = flex_payload(2U, 0U, osr::direction::kBackward);
-
-  struct restore {
-    ~restore() { motis::fifo_repair_enabled() = prev_; }
-    bool prev_;
-  } const guard{motis::fifo_repair_enabled()};
-
-  auto with_repair = raw({
-      {100, 200, n::duration_t{100}, slow},
-      {150, 250, n::duration_t{10}, fast},
-  });
-  motis::normalize_td_offsets(with_repair);
-
-  motis::fifo_repair_enabled() = false;
-  auto without_repair = raw({
-      {100, 200, n::duration_t{100}, slow},
-      {150, 250, n::duration_t{10}, fast},
-  });
-  motis::normalize_td_offsets(without_repair);
-
-  EXPECT_NE(with_repair, without_repair);
-
-  // Without step 2 the slow offer survives, and the sequence violates FIFO:
-  // departing later arrives earlier. This is exactly what the repair prevents.
-  EXPECT_EQ(t(200), arrival(without_repair, 100));
-  EXPECT_EQ(t(160), arrival(without_repair, 150));
-  EXPECT_LT(arrival(without_repair, 150), arrival(without_repair, 100));
-
-  // With the repair the arrival never decreases as the departure grows.
-  // The fast window [150, 250) is half-open, so 249 is the last departure
-  // that can still start a ride.
-  auto prev = arrival(with_repair, 100);
-  for (auto dep = 101; dep < 250; ++dep) {
-    auto const cur = arrival(with_repair, dep);
-    ASSERT_TRUE(cur.has_value()) << "at minute " << dep;
-    EXPECT_GE(*cur, *prev) << "at minute " << dep;
-    prev = cur;
-  }
-}
-
 // Property test: on random producer-built sequences, both evaluation paths must
 // reproduce alpha_tilde from Definition 2.
 //   * normalized sequence + get_td_duration  (the first-match fast path)
