@@ -436,22 +436,25 @@ void add_flex_td_offsets(osr::ways const& w,
       if (!rental.has_value()) {
         continue;
       }
-      // Positions as the output timeline shows them (it lays out the path
-      // from the departure; a switch edge belongs to the leg before it in
-      // travel order). Costs of the chain equal its durations; the final
-      // matching costs more than it takes, so measure from the destination
-      // node. Rounded so the shown pickup is never before, the shown
-      // drop-off never after the estimate.
+      // Seconds from the start of the path (travel order) to where the
+      // output timeline (street_routing over osr's reconstruct) shows the
+      // ride start and end. Reconstruct lays out the label costs of the
+      // chain; the matching piece at the stop is shown with its candidate
+      // cost (the search charged more). A switch edge is shown with the
+      // mode of its target in search order: forward, the ride starts at the
+      // foot label before the first rental label and ends at the last one;
+      // backward, it starts at the last rental label and ends at the foot
+      // label after it (travel order). Shown times are truncated to minutes
+      // from a whole-minute departure, so flooring matches them exactly.
       auto const& rc = *rental;
       auto const fwd = dir == osr::direction::kForward;
-      auto const pickup = fwd ? rc.min_ : rc.dest_node_ - rc.max_;
-      auto const drop_off =
-          fwd ? rc.after_max_ : rc.dest_node_ - rc.before_min_;
+      auto const total = rc.dest_node_ + rc.dest_match_;
+      auto const pickup = fwd ? rc.before_min_ : total - rc.max_;
+      auto const drop_off = fwd ? rc.max_ : total - rc.before_min_;
       using rep = n::duration_t::rep;
-      rides[i] = flex_ride{
-          .pickup_ = n::duration_t{static_cast<rep>(pickup / 60)},
-          .drop_off_ = n::duration_t{
-              static_cast<rep>((static_cast<int>(drop_off) + 59) / 60)}};
+      rides[i] = flex_ride{.pickup_ = n::duration_t{static_cast<rep>(pickup / 60)},
+                           .drop_off_ =
+                               n::duration_t{static_cast<rep>(drop_off / 60)}};
     }
 
     // Store osr routing state for later path reconstruction.

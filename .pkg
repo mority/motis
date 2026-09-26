@@ -49,7 +49,7 @@
 [osr]
   url=git@github.com:mority/osr.git
   branch=flex-rental-costs
-  commit=9918b685a0d277df9e0f39bd840b5e7ae2a924ee
+  commit=e276228c437fd6062152b8e41a50c8ef6dd8b5dc
 [prometheus-cpp]
   url=git@github.com:motis-project/prometheus-cpp.git
   branch=master
