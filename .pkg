@@ -37,7 +37,7 @@
 [nigiri]
   url=git@github.com:mority/nigiri.git
   branch=td_offsets
-  commit=0417c2909ef1a5577f556e9c453ab5c07da2c4c3
+  commit=195588955417bcf1f5e4baad7c55d735b1457bba
 [openapi-cpp]
   url=git@github.com:triptix-tech/openapi-cpp.git
   branch=master
