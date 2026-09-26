@@ -40,17 +40,26 @@ flex_routings_t get_flex_routings(nigiri::timetable const&,
                                   std::chrono::seconds max,
                                   osr_parameters const&);
 
-// Departure times (start of the whole access / egress / direct itinerary of
-// `duration`) at which transport `id` operating on service `day` (midnight
-// UTC of its traffic day) can be used: the ride starts inside the boarding
-// stop's window and ends inside the alighting stop's window,
-//   W = [a_from, b_from) ∩ [a_to - duration, b_to - duration).
-// Half-open, so zero-length windows give an empty interval.
+// When the ride starts (pickup) and ends (drop-off), relative to the start
+// of the whole access / egress / direct path in travel direction.
+struct flex_ride {
+  nigiri::duration_t pickup_;
+  nigiri::duration_t drop_off_;
+};
+
+// Departure times (start of the whole path) at which transport `id`
+// operating on service `day` (midnight UTC of its traffic day) can be used:
+// the ride starts inside the boarding stop's window and ends inside the
+// alighting stop's window,
+//   W = [a_from - pickup, b_from - pickup)
+//       ∩ [a_to - drop_off, b_to - drop_off]
+// Pickup is half-open, drop-off closed at the end ("service ends at").
+// Zero-length windows give an empty interval.
 nigiri::interval<nigiri::unixtime_t> get_departure_window(
     nigiri::timetable const&,
     mode_payload id,
     nigiri::unixtime_t day,
-    nigiri::duration_t duration);
+    flex_ride);
 
 // Service day of `id`'s transport whose pickup window at the boarding stop
 // opened last at or before `t` (falls back to the day of `t`).
