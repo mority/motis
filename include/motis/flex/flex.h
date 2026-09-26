@@ -16,9 +16,12 @@
 
 namespace motis::flex {
 
-using flex_routings_t =
-    hash_map<std::pair<nigiri::flex_stop_seq_idx_t, nigiri::stop_idx_t>,
-             std::vector<mode_payload>>;
+// Key: stop sequence, boarding and alighting stop index (travel order).
+// All transports of one key share the same street routing.
+using flex_routings_t = hash_map<
+    std::pair<nigiri::flex_stop_seq_idx_t,
+              std::pair<nigiri::stop_idx_t, nigiri::stop_idx_t>>,
+    std::vector<mode_payload>>;
 
 osr::sharing_data prepare_sharing_data(nigiri::timetable const&,
                                        osr::ways const&,
@@ -27,15 +30,7 @@ osr::sharing_data prepare_sharing_data(nigiri::timetable const&,
                                        flex_areas const&,
                                        platform_matches_t const*,
                                        mode_payload,
-                                       osr::direction,
                                        flex_routing_data&);
-
-bool is_in_flex_stop(nigiri::timetable const&,
-                     osr::ways const&,
-                     flex_areas const&,
-                     flex_additional_nodes const&,
-                     nigiri::flex_stop_t const&,
-                     osr::node_idx_t);
 
 flex_routings_t get_flex_routings(nigiri::timetable const&,
                                   point_rtree<nigiri::location_idx_t> const&,
@@ -44,6 +39,41 @@ flex_routings_t get_flex_routings(nigiri::timetable const&,
                                   osr::direction,
                                   std::chrono::seconds max,
                                   osr_parameters const&);
+
+// Departure times (start of the whole access / egress / direct itinerary of
+// `duration`) at which transport `id` operating on service `day` (midnight
+// UTC of its traffic day) can be used: the ride starts inside the boarding
+// stop's window and ends inside the alighting stop's window,
+//   W = [a_from, b_from) ∩ [a_to - duration, b_to - duration).
+// Half-open, so zero-length windows give an empty interval.
+nigiri::interval<nigiri::unixtime_t> get_departure_window(
+    nigiri::timetable const&,
+    mode_payload id,
+    nigiri::unixtime_t day,
+    nigiri::duration_t duration);
+
+// Service day of `id`'s transport whose pickup window at the boarding stop
+// opened last at or before `t` (falls back to the day of `t`).
+date::sys_days get_service_day(nigiri::timetable const&,
+                               mode_payload id,
+                               std::chrono::sys_seconds t);
+
+// Sets the pickup / drop-off windows of a FLEX leg for service day `day`.
+void set_flex_windows(nigiri::timetable const&,
+                      mode_payload id,
+                      date::sys_days day,
+                      api::Leg&);
+
+// Moves a direct FLEX itinerary (routed for `ids.front()`, starting or - for
+// arrive_by - ending at `time`) to the first departure (latest for arrive_by)
+// that one of the transports `ids` offers: the ride has to start inside the
+// window of the boarding stop and end inside the window of the alighting
+// stop. Returns false if there is none.
+bool fit_direct_to_windows(nigiri::timetable const&,
+                           std::vector<mode_payload> const& ids,
+                           nigiri::unixtime_t time,
+                           bool arrive_by,
+                           api::Itinerary&);
 
 void add_flex_td_offsets(osr::ways const&,
                          osr::lookup const&,

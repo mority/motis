@@ -26,10 +26,10 @@ n::unixtime_t t(int const minutes) {
 
 n::routing::transport_mode_t::payload_t flex_payload(
     n::flex_transport_idx_t::value_t const transport,
-    n::stop_idx_t const stop,
+    n::stop_idx_t const to_stop,
     osr::direction const dir) {
-  return motis::flex::mode_payload{n::flex_transport_idx_t{transport}, stop,
-                                   dir}
+  return motis::flex::mode_payload{n::flex_transport_idx_t{transport}, 0U,
+                                   to_stop, dir}
       .to_payload();
 }
 
@@ -420,7 +420,8 @@ TEST(motis, td_offsets_preserve_mode_payload) {
       motis::flex::mode_payload{offsets[1].transport_mode_payload_};
   EXPECT_EQ(osr::direction::kBackward, restored.get_dir());
   EXPECT_EQ(n::flex_transport_idx_t{42U}, restored.get_flex_transport());
-  EXPECT_EQ(static_cast<n::stop_idx_t>(3U), restored.get_stop());
+  EXPECT_EQ(static_cast<n::stop_idx_t>(0U), restored.get_from_stop());
+  EXPECT_EQ(static_cast<n::stop_idx_t>(3U), restored.get_to_stop());
 }
 
 // --- Instrumentation for the evaluation ------------------------------------
