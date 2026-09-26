@@ -322,14 +322,13 @@ n::interval<n::unixtime_t> get_departure_window(n::timetable const& tt,
       tt.flex_transport_stop_time_windows_[id.get_flex_transport()];
   auto const from = windows[id.get_from_stop()];
   auto const to = windows[id.get_to_stop()];
-  if (to.from_ == to.to_) {
-    return {day, day};  // zero-length window: invalid, never usable
-  }
-  // Pickup half-open, drop-off closed at the end ("service ends at").
+  // Both window ends inclusive; [T, T] is a fixed departure at minute T.
+  // Closed at minute resolution -> half-open by one minute at the end.
+  auto const one = n::duration_t{1};
   return n::interval{day + from.from_ - ride.pickup_,
-                     day + from.to_ - ride.pickup_}
+                     day + from.to_ - ride.pickup_ + one}
       .intersect(n::interval{day + to.from_ - ride.drop_off_,
-                             day + to.to_ - ride.drop_off_ + n::duration_t{1}});
+                             day + to.to_ - ride.drop_off_ + one});
 }
 
 void add_flex_td_offsets(osr::ways const& w,

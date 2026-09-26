@@ -25,8 +25,9 @@ namespace {
 
 
 // ICE FFM_10 -> DA_10 arrives 10:00 local (08:00Z). Flex service FLEX_DA:
-// pickup only in area da_pickup (around DA Hbf) in {window}, drop-off only
-// in area da_area (west of it) 10:00-13:00 local (08:00-11:00Z).
+// pickup only in area da_pickup (around DA Hbf) in the first {}, drop-off
+// only in area da_area (west of it) in the second {} (default 10:00-13:00
+// local, 08:00-11:00Z).
 constexpr auto kFlexWindowsGtfs = R"(
 # agency.txt
 agency_id,agency_name,agency_url,agency_timezone
@@ -58,7 +59,7 @@ trip_id,arrival_time,departure_time,stop_id,location_group_id,location_id,stop_s
 ICE,09:00:00,09:00:00,FFM_10,,,0,,,,,0,0
 ICE,10:00:00,10:00:00,DA_10,,,1,,,,,0,0
 FLEX_DA,,,,,da_pickup,0,{},BR,,2,1
-FLEX_DA,,,,,da_area,1,10:00:00,13:00:00,,BR,1,2
+FLEX_DA,,,,,da_area,1,{},,BR,1,2
 
 # calendar.txt
 service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date
@@ -72,7 +73,9 @@ S_ALL,1,1,1,1,1,1,1,20190501,20190503
 constexpr auto kPickup = geo::latlng{49.87336, 8.62926};  // DA_10, da_pickup
 constexpr auto kDest = geo::latlng{49.8755, 8.6185};  // da_area
 
-data load(std::string_view const sub_dir, std::string_view const window) {
+data load(std::string_view const sub_dir,
+          std::string_view const pickup,
+          std::string_view const drop_off = "10:00:00,13:00:00") {
   auto ec = std::error_code{};
   auto const path = fs::path{"test/data/flex_windows"} / sub_dir;
   fs::remove_all(path, ec);
@@ -82,7 +85,7 @@ data load(std::string_view const sub_dir, std::string_view const window) {
           .num_days_ = 3,
           .datasets_ = {{"test",
                          {.path_ = fmt::format(fmt::runtime(kFlexWindowsGtfs),
-                                               window)}}}}};
+                                               pickup, drop_off)}}}}};
   import(cfg, path);
   return data{path, cfg};
 }
@@ -157,7 +160,8 @@ TEST(motis, flex_routings_travel_order) {
   EXPECT_TRUE(routings(d, kPickup, osr::direction::kBackward, 1min).empty());
 }
 
-// W = [a_from, b_from) ∩ [a_to - l, b_to - l), with the windows of both ends.
+// W = [a_from - pickup, b_from - pickup] ∩ [a_to - drop_off, b_to - drop_off],
+// both ends inclusive, returned as [start, end + 1 min).
 // Pickup 08:10-08:40Z, drop-off 08:00-11:00Z.
 TEST(motis, flex_departure_window) {
   auto const d = load("window", "10:10:00,10:40:00");
@@ -168,13 +172,13 @@ TEST(motis, flex_departure_window) {
                        n::duration_t const drop_off) {
     return flex::flex_ride{.pickup_ = pickup, .drop_off_ = drop_off};
   };
-  EXPECT_EQ((n::interval{utc(1, 8, 10), utc(1, 8, 40)}),
+  EXPECT_EQ((n::interval{utc(1, 8, 10), utc(1, 8, 41)}),
             flex::get_departure_window(*d.tt_, id, day, ride(0min, 20min)));
   // Walking 5 min to the vehicle: leave 5 min before the pickup window.
-  EXPECT_EQ((n::interval{utc(1, 8, 5), utc(1, 8, 35)}),
+  EXPECT_EQ((n::interval{utc(1, 8, 5), utc(1, 8, 36)}),
             flex::get_departure_window(*d.tt_, id, day, ride(5min, 25min)));
-  // The drop-off window closes first; its end is inclusive. A walk after the
-  // drop-off does not count.
+  // The drop-off window closes first. A walk after the drop-off does not
+  // count.
   EXPECT_EQ((n::interval{utc(1, 8, 10), utc(1, 8, 31)}),
             flex::get_departure_window(*d.tt_, id, day, ride(0min, 150min)));
   auto const none =
@@ -182,17 +186,59 @@ TEST(motis, flex_departure_window) {
   EXPECT_GE(none.from_, none.to_);
 }
 
-// Zero-length window [T, T]: half-open, so empty.
-TEST(motis, flex_zero_length_window_is_empty) {
-  auto const d = load("zero_window", "10:10:00,10:10:00");
-  auto const w = flex::get_departure_window(
-      *d.tt_, offer(osr::direction::kForward), utc(1, 0, 0),
-      flex::flex_ride{.pickup_ = 0min, .drop_off_ = 10min});
-  EXPECT_GE(w.from_, w.to_);
+// Zero-length pickup window [T, T]: a fixed departure at minute T (call-taxi
+// encoding of the Austrian feeds), here with a drop-off window from the same
+// minute to the end of the service day (28:59).
+TEST(motis, flex_zero_length_window_is_fixed_departure) {
+  auto const d = load("zero_window", "10:10:00,10:10:00", "10:10:00,28:59:00");
+  auto const id = offer(osr::direction::kForward);
+  auto const day = utc(1, 0, 0);
+  auto const ride = [](n::duration_t const pickup,
+                       n::duration_t const drop_off) {
+    return flex::flex_ride{.pickup_ = pickup, .drop_off_ = drop_off};
+  };
 
-  auto j = itinerary(utc(1, 7, 30), utc(1, 7, 45), api::ModeEnum::FLEX);
-  EXPECT_FALSE(flex::fit_direct_to_windows(
-      *d.tt_, {offer(osr::direction::kForward)}, utc(1, 7, 30), false, j));
+  // Exactly one departure minute: pickup at 08:10Z.
+  EXPECT_EQ((n::interval{utc(1, 8, 10), utc(1, 8, 11)}),
+            flex::get_departure_window(*d.tt_, id, day, ride(0min, 10min)));
+  // 3 min walk to the vehicle: leave at 08:07Z.
+  EXPECT_EQ((n::interval{utc(1, 8, 7), utc(1, 8, 8)}),
+            flex::get_departure_window(*d.tt_, id, day, ride(3min, 13min)));
+  // Drop-off until 28:59 local = 02:59Z the next day, inclusive.
+  EXPECT_EQ((n::interval{utc(1, 8, 10), utc(1, 8, 11)}),
+            flex::get_departure_window(*d.tt_, id, day,
+                                       ride(0min, 1129min)));  // 02:59Z
+  auto const late =
+      flex::get_departure_window(*d.tt_, id, day, ride(0min, 1130min));
+  EXPECT_GE(late.from_, late.to_);
+
+  auto const ids = std::vector{id};
+  // Direct, depart 07:30: moved to the fixed departure.
+  {
+    auto j = itinerary(utc(1, 7, 30), utc(1, 7, 45), api::ModeEnum::FLEX);
+    ASSERT_TRUE(flex::fit_direct_to_windows(*d.tt_, ids, utc(1, 7, 30),
+                                            false, j));
+    EXPECT_EQ(utc(1, 8, 10), *j.startTime_);
+    EXPECT_EQ(utc(1, 8, 25), *j.endTime_);
+    auto const& l = j.legs_.front();
+    EXPECT_EQ(utc(1, 8, 10), **l.from_.flexStartPickupDropOffWindow_);
+    EXPECT_EQ(utc(1, 8, 10), **l.from_.flexEndPickupDropOffWindow_);
+    EXPECT_EQ(utc(2, 2, 59), **l.to_.flexEndPickupDropOffWindow_);
+  }
+  // Direct, arrive by 12:00: still the 08:10 departure.
+  {
+    auto j = itinerary(utc(1, 11, 45), utc(1, 12, 0), api::ModeEnum::FLEX);
+    ASSERT_TRUE(
+        flex::fit_direct_to_windows(*d.tt_, ids, utc(1, 12, 0), true, j));
+    EXPECT_EQ(utc(1, 8, 10), *j.startTime_);
+  }
+  // Depart at 08:11: the next departure is the next day's.
+  {
+    auto j = itinerary(utc(1, 8, 11), utc(1, 8, 26), api::ModeEnum::FLEX);
+    ASSERT_TRUE(flex::fit_direct_to_windows(*d.tt_, ids, utc(1, 8, 11),
+                                            false, j));
+    EXPECT_EQ(utc(2, 8, 10), *j.startTime_);
+  }
 }
 
 TEST(motis, flex_direct_respects_windows) {
@@ -225,13 +271,13 @@ TEST(motis, flex_direct_respects_windows) {
     EXPECT_EQ(utc(1, 8, 20), *j.startTime_);
   }
 
-  // Arrive by 12:00: latest departure 08:39 (window end is exclusive).
+  // Arrive by 12:00: latest departure 08:40 (window end is inclusive).
   {
     auto j = itinerary(utc(1, 11, 45), utc(1, 12, 0), api::ModeEnum::FLEX);
     ASSERT_TRUE(
         flex::fit_direct_to_windows(*d.tt_, ids, utc(1, 12, 0), true, j));
-    EXPECT_EQ(utc(1, 8, 39), *j.startTime_);
-    EXPECT_EQ(utc(1, 8, 54), *j.endTime_);
+    EXPECT_EQ(utc(1, 8, 40), *j.startTime_);
+    EXPECT_EQ(utc(1, 8, 55), *j.endTime_);
   }
 
   // Only the ride has to fit: walk 5 min to the vehicle, ride 150 min, walk

@@ -51,10 +51,12 @@ struct flex_ride {
 // operating on service `day` (midnight UTC of its traffic day) can be used:
 // the ride starts inside the boarding stop's window and ends inside the
 // alighting stop's window,
-//   W = [a_from - pickup, b_from - pickup)
+//   W = [a_from - pickup, b_from - pickup]
 //       ∩ [a_to - drop_off, b_to - drop_off]
-// Pickup is half-open, drop-off closed at the end ("service ends at").
-// Zero-length windows give an empty interval.
+// Both window ends are inclusive. A zero-length window [T, T] is a fixed
+// departure at minute T (the Austrian feeds encode call-taxis with a fixed
+// departure this way; GTFS-Flex has no valid encoding for it). Returned
+// half-open: [start, end + 1 min).
 nigiri::interval<nigiri::unixtime_t> get_departure_window(
     nigiri::timetable const&,
     mode_payload id,
