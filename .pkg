@@ -49,7 +49,7 @@
 [osr]
   url=git@github.com:mority/osr.git
   branch=staged_multi_profile
-  commit=439e1dadeb338ba68e28c429fbfeda672694ec29
+  commit=b39845ed0eef99a9c5eec9da657c84b7ccda789b
 [prometheus-cpp]
   url=git@github.com:motis-project/prometheus-cpp.git
   branch=master
