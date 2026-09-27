@@ -2,9 +2,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <iostream>
 #include <limits>
 #include <mutex>
 #include <optional>
+#include <string_view>
 #include <variant>
 
 #include "boost/thread/tss.hpp"
@@ -23,8 +26,12 @@
 #include "osr/lookup.h"
 #include "osr/platforms.h"
 #include "osr/routing/profile.h"
+#include "osr/routing/profiles/bike_sharing.h"
+#include "osr/routing/profiles/car.h"
+#include "osr/routing/profiles/car_sharing.h"
 #include "osr/routing/route.h"
 #include "osr/routing/sharing_data.h"
+#include "osr/routing/staged_search.h"
 #include "osr/types.h"
 
 #include "nigiri/common/interval.h"
@@ -263,6 +270,59 @@ bool include_rental_provider(
                                   end(*rental_providers));
 }
 
+// Rental offsets: one staged search over all products (foot stages shared,
+// one vehicle stage per product) instead of one joint bike_sharing /
+// car_sharing search per product. MOTIS_RENTAL_STAGED=0 restores the latter.
+bool use_staged_rental() {
+  static auto const enabled = [] {
+    auto const* const v = std::getenv("MOTIS_RENTAL_STAGED");
+    return v == nullptr || std::string_view{v} != "0";
+  }();
+  return enabled;
+}
+
+// Legacy path only: keep just the best offset per stop over all products
+// (like the staged search does), for comparisons. MOTIS_RENTAL_DEDUP=1.
+// Debug: print the rental offsets of every search to stderr.
+// MOTIS_RENTAL_DUMP_OFFSETS=1.
+bool dump_rental_offsets() {
+  static auto const enabled = [] {
+    auto const* const v = std::getenv("MOTIS_RENTAL_DUMP_OFFSETS");
+    return v != nullptr && std::string_view{v} == "1";
+  }();
+  return enabled;
+}
+
+// Debug: sort the rental offsets (location, duration, mode) so that both
+// paths hand nigiri the same order. MOTIS_RENTAL_SORT_OFFSETS=1.
+bool sort_rental_offsets() {
+  static auto const enabled = [] {
+    auto const* const v = std::getenv("MOTIS_RENTAL_SORT_OFFSETS");
+    return v != nullptr && std::string_view{v} == "1";
+  }();
+  return enabled;
+}
+
+// Staged path: label walk-only offsets WALK instead of with the first product
+// (the joint searches label them with their product, which makes
+// `direct_filter` treat a walk like a rental of that product).
+// MOTIS_RENTAL_WALK_OFFSETS=1.
+bool label_walk_only_offsets_as_walk() {
+  static auto const enabled = [] {
+    auto const* const v = std::getenv("MOTIS_RENTAL_WALK_OFFSETS");
+    return v != nullptr && std::string_view{v} == "1";
+  }();
+  return enabled;
+}
+
+bool dedup_legacy_rental_offsets() {
+  static auto const enabled = [] {
+    auto const* const v = std::getenv("MOTIS_RENTAL_DEDUP");
+    return v != nullptr && std::string_view{v} == "1";
+  }();
+  return enabled;
+}
+
 std::vector<n::routing::offset> get_offsets(
     routing const& r,
     n::rt_timetable const* rtt,
@@ -325,6 +385,21 @@ std::vector<n::routing::offset> get_offsets(
     };
     auto near_stop_match_cache = std::vector<near_stop_match_cache_entry>{};
 
+    auto const near_stop_matches =
+        [&](osr::search_profile const p) -> osr::match_result const& {
+      auto cached = utl::find_if(near_stop_match_cache, [&](auto const& entry) {
+        return entry.profile_ == p && entry.direction_ == dir;
+      });
+      if (cached == end(near_stop_match_cache)) {
+        auto matches = get_reverse_platform_way_matches(
+            *r.l_, r.way_matches_, p, near_stops, near_stop_locations, dir,
+            max_matching_distance);
+        near_stop_match_cache.emplace_back(p, dir, std::move(matches));
+        cached = std::prev(end(near_stop_match_cache));
+      }
+      return cached->matches_;
+    };
+
     auto const route = [&](osr::search_profile const p,
                            osr::sharing_data const* sharing,
                            transport_mode_t const mode) {
@@ -332,22 +407,11 @@ std::vector<n::routing::offset> get_offsets(
       auto pos_match = osr::match_result{};
       r.l_->match(params, pos, false, dir, max_matching_distance, nullptr, p,
                   {}, pos_match);
-
-      auto cached_near_stop_matches =
-          utl::find_if(near_stop_match_cache, [&](auto const& entry) {
-            return entry.profile_ == p && entry.direction_ == dir;
-          });
-      if (cached_near_stop_matches == end(near_stop_match_cache)) {
-        auto matches = get_reverse_platform_way_matches(
-            *r.l_, r.way_matches_, p, near_stops, near_stop_locations, dir,
-            max_matching_distance);
-        near_stop_match_cache.emplace_back(p, dir, std::move(matches));
-        cached_near_stop_matches = std::prev(end(near_stop_match_cache));
-      }
+      auto const& matches = near_stop_matches(p);
 
       auto state = osr::route_one_to_many(
           params, *r.w_, *r.l_, p, pos, near_stop_locations,
-          pos_match[osr::match_idx_t{0U}], cached_near_stop_matches->matches_,
+          pos_match[osr::match_idx_t{0U}], matches,
           static_cast<osr::cost_t>(max.count()), dir, nullptr, sharing,
           elevations);
       auto const& paths = state->results();
@@ -403,9 +467,15 @@ std::vector<n::routing::offset> get_offsets(
         providers.insert(cp.provider_);
       }
 
+      // Products to route, in provider order.
+      struct rental_product {
+        gbfs::products_routing_data* rd_;
+        osr::search_profile profile_;
+        transport_mode_t mode_;
+        std::string const* provider_id_;
+      };
+      auto products = std::vector<rental_product>{};
       for (auto const& pi : providers) {
-        UTL_START_TIMING(provider_timer);
-
         auto const& provider = gbfs_rd.data_->providers_.at(pi);
         if (!include_rental_provider(rental_providers, rental_provider_groups,
                                      provider.get())) {
@@ -427,30 +497,168 @@ std::vector<n::routing::offset> get_offsets(
             provider_rd = gbfs_rd.get_provider_routing_data(*provider);
           }
           auto const prod_ref = gbfs::gbfs_products_ref{pi, prod.idx_};
-          auto* prod_rd =
-              gbfs_rd.get_products_routing_data(*provider, prod.idx_);
-          auto const sharing = prod_rd->get_sharing_data(
-              r.w_->n_nodes(), ignore_rental_return_constraints);
-
-          auto const mode = gbfs_rd.get_transport_mode(prod_ref);
-          auto const paths =
-              route(gbfs::get_osr_profile(prod.form_factor_), &sharing, mode);
-          ignore_walk = true;
-          for (auto const [p, l] : utl::zip(paths, near_stops)) {
-            if (p.has_value()) {
-              offsets.emplace_back(l,
-                                   n::duration_t{static_cast<unsigned>(
-                                       std::ceil(p->cost_ / 60.0))},
-                                   mode);
-            }
-          }
+          products.push_back(rental_product{
+              .rd_ = gbfs_rd.get_products_routing_data(*provider, prod.idx_),
+              .profile_ = gbfs::get_osr_profile(prod.form_factor_),
+              .mode_ = gbfs_rd.get_transport_mode(prod_ref),
+              .provider_id_ = &provider->id_});
         }
-
-        stats.emplace(fmt::format("prepare_{}_{}_{}", to_str(dir),
-                                  fmt::streamed(m), provider->id_),
-                      UTL_GET_TIMING_MS(provider_timer));
       }
 
+      if (products.empty()) {
+        return;
+      }
+      ignore_walk = true;
+
+      if (!use_staged_rental()) {
+        // One joint search per product (bike_sharing / car_sharing profile).
+        auto best = hash_map<n::location_idx_t, std::size_t>{};  // dedup
+        for (auto const& prod : products) {
+          UTL_START_TIMING(product_timer);
+          auto const sharing = prod.rd_->get_sharing_data(
+              r.w_->n_nodes(), ignore_rental_return_constraints);
+          auto const paths = route(prod.profile_, &sharing, prod.mode_);
+          for (auto const [p, l] : utl::zip(paths, near_stops)) {
+            if (!p.has_value()) {
+              continue;
+            }
+            auto const duration = n::duration_t{
+                static_cast<unsigned>(std::ceil(p->cost_ / 60.0))};
+            if (dedup_legacy_rental_offsets()) {
+              if (auto const it = best.find(l); it != end(best)) {
+                if (duration < offsets[it->second].duration_) {
+                  offsets[it->second] = {l, duration, prod.mode_};
+                }
+                continue;
+              }
+              best.emplace(l, offsets.size());
+            }
+            offsets.emplace_back(l, duration, prod.mode_);
+          }
+          stats[fmt::format("prepare_{}_{}_{}", to_str(dir), fmt::streamed(m),
+                            *prod.provider_id_)] +=
+              static_cast<std::uint64_t>(UTL_GET_TIMING_MS(product_timer));
+        }
+      } else {
+        // One staged search: foot -> vehicle (per product) -> foot. Every
+        // destination gets the best product. Walk-only results are labelled
+        // with the first product like the joint searches did (or WALK, see
+        // `label_walk_only_offsets_as_walk()`). The state is kept for offset
+        // leg reconstruction under every product's mode and under WALK.
+        UTL_START_TIMING(staged_timer);
+        auto state = std::make_unique<osr::staged_one_to_many_state>();
+        auto& s = state->search_;
+
+        // Parameters as the joint profiles use them (foot parameters are
+        // identical for bike_sharing and car_sharing).
+        auto const bike_sharing_params =
+            std::get<osr::bike_sharing::parameters>(to_profile_parameters(
+                osr::search_profile::kBikeSharing, osr_params));
+        auto const car_sharing_params =
+            std::get<osr::car_sharing<osr::track_node_tracking>::parameters>(
+                to_profile_parameters(osr::search_profile::kCarSharing,
+                                      osr_params));
+
+        auto const first = s.add_stage<osr::bike_sharing::footp>(
+            bike_sharing_params.foot_, nullptr, true);
+        auto sharings = std::vector<osr::sharing_data const*>{};
+        auto vehicle_stages = std::vector<std::size_t>{};
+        for (auto const& prod : products) {
+          auto const& sharing = s.own(prod.rd_->get_sharing_data(
+              r.w_->n_nodes(), ignore_rental_return_constraints));
+          sharings.push_back(&sharing);
+          vehicle_stages.push_back(
+              prod.profile_ == osr::search_profile::kCarSharing
+                  ? s.add_stage<osr::car>(car_sharing_params.car_,
+                                          sharing.through_allowed_)
+                  : s.add_stage<osr::bike_sharing::bikep>(
+                        bike_sharing_params.bike_, sharing.through_allowed_));
+        }
+        auto const last = s.add_stage<osr::bike_sharing::footp>(
+            bike_sharing_params.foot_, nullptr, true);
+        for (auto const [i, prod] : utl::enumerate(products)) {
+          osr::add_rental_transitions(
+              s, first, vehicle_stages[i], last, *sharings[i], dir,
+              prod.profile_ == osr::search_profile::kCarSharing);
+        }
+
+        // Matching as the joint profiles do it (both match like foot).
+        auto const p = osr::search_profile::kBikeSharing;
+        auto pos_match = osr::match_result{};
+        r.l_->match(to_profile_parameters(p, osr_params), pos, false, dir,
+                    max_matching_distance, nullptr, p, {}, pos_match);
+        auto const& matches = near_stop_matches(p);
+
+        s.run(*r.w_, pos, near_stop_locations, pos_match[osr::match_idx_t{0U}],
+              matches, static_cast<osr::cost_t>(max.count()), dir, nullptr,
+              elevations);
+
+        auto const walk_mode = label_walk_only_offsets_as_walk()
+                                   ? transport_mode(osr::search_profile::kFoot)
+                                   : products.front().mode_;
+        auto const& paths = s.results();
+        auto dest_idx = hash_map<n::location_idx_t, std::size_t>{};
+        for (auto k = std::size_t{0U}; k != paths.size(); ++k) {
+          if (!paths[k].has_value()) {
+            continue;
+          }
+          auto mode = walk_mode;
+          for (auto const stage : s.stages_on_path(k)) {
+            if (stage != first && stage != last) {
+              mode = products[stage - first - 1U].mode_;
+              break;
+            }
+          }
+          offsets.emplace_back(near_stops[k],
+                               n::duration_t{static_cast<unsigned>(
+                                   std::ceil(paths[k]->cost_ / 60.0))},
+                               mode);
+          dest_idx.emplace(near_stops[k], k);
+        }
+
+        if (states != nullptr && !dest_idx.empty()) {
+          auto const idx = states->searches_.size();
+          states->by_mode_[walk_mode] = idx;
+          for (auto const& prod : products) {
+            states->by_mode_[prod.mode_] = idx;
+          }
+          states->searches_.emplace_back(
+              one_to_many_search{std::move(state), std::move(dest_idx), {}});
+        }
+
+        stats.emplace(
+            fmt::format("prepare_{}_{}_staged", to_str(dir), fmt::streamed(m)),
+            UTL_GET_TIMING_MS(staged_timer));
+        stats.emplace(fmt::format("prepare_{}_{}_staged_products", to_str(dir),
+                                  fmt::streamed(m)),
+                      products.size());
+        for (auto const& [k, v] : s.timings_ms()) {
+          stats[fmt::format("prepare_{}_{}_staged_{}", to_str(dir),
+                            fmt::streamed(m), k)] += v;
+        }
+      }
+
+      if (sort_rental_offsets()) {
+        utl::sort(offsets, [](auto const& a, auto const& b) {
+          return std::tie(a.target_, a.duration_, a.transport_mode_payload_) <
+                 std::tie(b.target_, b.duration_, b.transport_mode_payload_);
+        });
+      }
+      if (dump_rental_offsets()) {
+        static auto mutex = std::mutex{};
+        auto const lock = std::scoped_lock{mutex};
+        auto sorted = offsets;
+        utl::sort(sorted, [](auto const& a, auto const& b) {
+          return std::tie(a.target_, a.duration_) <
+                 std::tie(b.target_, b.duration_);
+        });
+        std::cerr << "OFFSETS " << to_str(dir) << " pos=" << pos.pos_
+                  << " n=" << sorted.size() << "\n";
+        for (auto const& o : sorted) {
+          std::cerr << "  " << o.target_ << " " << o.duration_.count() << " "
+                    << o.transport_mode_payload_ << "\n";
+        }
+      }
     } else {
       auto const mode = transport_mode(profile);
       auto const paths = route(profile, nullptr, mode);
