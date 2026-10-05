@@ -37,7 +37,7 @@
 [nigiri]
   url=git@github.com:mority/nigiri.git
   branch=caspt27
-  commit=1e98ea62dff0939db80f41c31935f98af77096ce
+  commit=ab692768f100c025cefbc5ee76b904b66f9dc95a
 [openapi-cpp]
   url=git@github.com:triptix-tech/openapi-cpp.git
   branch=master
