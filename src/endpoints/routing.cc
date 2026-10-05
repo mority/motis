@@ -1124,6 +1124,7 @@ api::plan_response routing::route(api::plan_params const& query,
         .slow_direct_ = query.slowDirect_,
         .fastest_slow_direct_factor_ = query.fastestSlowDirectFactor_};
     remove_slower_than_fastest_direct(q);
+    q.direct_durations_ = get_direct_durations(direct, q);
     UTL_STOP_TIMING(query_preparation);
 
     if (tt_->locations_.footpaths_out_.at(q.prf_idx_).empty()) {
