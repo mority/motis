@@ -4,6 +4,7 @@
 	import { Separator } from '$lib/components/ui/separator';
 	import { formatDurationSec } from '$lib/formatDuration';
 	import { getModeStyle, routeColor } from '$lib/modeStyle';
+	import { getProviderName } from '$lib/getModeName';
 	import {
 		plan,
 		type Itinerary,
@@ -54,6 +55,9 @@
 		{#if l.displayName}
 			{l.displayName}
 		{:else}
+			{#if getProviderName(l)}
+				<span class="mr-1.5 max-w-40 truncate">{getProviderName(l)}</span>
+			{/if}
 			{formatDurationSec(l.duration)}
 		{/if}
 	</div>
@@ -70,6 +74,7 @@
 				{#each r.direct as d, i (i)}
 					<DirectConnection
 						{d}
+						queriedTime={baseQuery?.query.time}
 						onclick={() => {
 							selectItinerary(d);
 						}}
