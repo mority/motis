@@ -20,9 +20,14 @@ struct flex_areas {
                       osr::lookup const&);
   ~flex_areas();
 
-  void add_area(nigiri::flex_area_idx_t,
-                osr::bitvec<osr::node_idx_t>&,
-                osr::bitvec<osr::node_idx_t>& tmp) const;
+  // Calls `f` with every street node of area `a`.
+  template <typename Fn>
+  void for_each_node(nigiri::flex_area_idx_t const a,
+                     osr::bitvec<osr::node_idx_t>& tmp,
+                     Fn&& f) const {
+    gbfs::decompress_bitvec(area_nodes_[a], tmp);
+    tmp.for_each_set_bit([&](auto&& i) { f(osr::node_idx_t{i}); });
+  }
 
   bool is_in_area(nigiri::flex_area_idx_t, geo::latlng const&) const;
 

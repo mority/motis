@@ -97,11 +97,4 @@ bool flex_areas::is_in_area(nigiri::flex_area_idx_t const a,
   return result;
 }
 
-void flex_areas::add_area(nigiri::flex_area_idx_t a,
-                          osr::bitvec<osr::node_idx_t>& b,
-                          osr::bitvec<osr::node_idx_t>& tmp) const {
-  gbfs::decompress_bitvec(area_nodes_[a], tmp);
-  tmp.for_each_set_bit([&](auto&& i) { b.set(osr::node_idx_t{i}, true); });
-}
-
 }  // namespace motis::flex

@@ -366,7 +366,7 @@ std::vector<n::routing::offset> get_offsets(
           }
         }
         if (!dest_idx.empty()) {
-          states->by_mode_[mode] = states->searches_.size();
+          states->by_mode_[mode] = {.search_idx_ = states->searches_.size()};
           states->searches_.emplace_back(
               one_to_many_search{std::move(state), std::move(dest_idx), {}});
         }

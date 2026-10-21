@@ -1,10 +1,14 @@
 #include "motis/flex/flex.h"
 
 #include <cmath>
+#include <cstdint>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <ranges>
+#include <span>
 #include <utility>
+#include <vector>
 
 #include "utl/concat.h"
 #include "utl/enumerate.h"
@@ -56,27 +60,34 @@ void verify_flex_limits(n::timetable const& tt) {
               n_transports, kMaxTransports, max_stops, kMaxStops);
 }
 
-osr::sharing_data prepare_sharing_data(n::timetable const& tt,
-                                       osr::ways const& w,
-                                       osr::lookup const& lookup,
-                                       osr::platforms const* pl,
-                                       flex_areas const& fa,
-                                       platform_matches_t const* pl_matches,
-                                       mode_payload const id,
-                                       flex_routing_data& frd) {
-  // Start / end in travel order, independent of the search direction: osr's
-  // car_sharing profile reads start_allowed_ / end_allowed_ that way.
-  auto const stop_seq =
-      tt.flex_stop_seq_[tt.flex_transport_stop_seq_[id.get_flex_transport()]];
-  auto const from_stop = stop_seq.at(id.get_from_stop());
-  auto const to_stop = stop_seq.at(id.get_to_stop());
+namespace {
 
+// The side of the ride whose stops are osr classes.
+enum class class_side : std::uint8_t { kNone, kStart, kEnd };
+
+// Allows taking the vehicle in `start_stops` and leaving it in `end_stops`.
+// Both are in travel order, independent of the search direction: osr's
+// car_sharing profile reads start_allowed_ / end_allowed_ that way. On the
+// side `classes`, stop i is osr class i.
+osr::sharing_data prepare_sharing_data(
+    n::timetable const& tt,
+    osr::ways const& w,
+    osr::lookup const& lookup,
+    osr::platforms const* pl,
+    flex_areas const& fa,
+    platform_matches_t const* pl_matches,
+    std::span<n::flex_stop_t const> start_stops,
+    std::span<n::flex_stop_t const> end_stops,
+    class_side const classes,
+    flex_routing_data& frd) {
   // Count additional nodes and allocate bit vectors.
   auto n_nodes = w.n_nodes();
-  for (auto const& s : {from_stop, to_stop}) {
-    s.apply(utl::overloaded{[&](n::location_group_idx_t const lg) {
-      n_nodes += tt.location_group_locations_[lg].size();
-    }});
+  for (auto const& stops : {start_stops, end_stops}) {
+    for (auto const& s : stops) {
+      s.apply(utl::overloaded{[&](n::location_group_idx_t const lg) {
+        n_nodes += tt.location_group_locations_[lg].size();
+      }});
+    }
   }
   frd.additional_nodes_.reset(w.n_nodes());
   frd.start_allowed_.resize(n_nodes);
@@ -85,6 +96,10 @@ osr::sharing_data prepare_sharing_data(n::timetable const& tt,
   frd.start_allowed_.zero_out();
   frd.end_allowed_.zero_out();
   frd.through_allowed_.one_out();
+  if (classes != class_side::kNone) {
+    frd.additional_nodes_.n_classes_ = static_cast<std::uint8_t>(
+        classes == class_side::kStart ? start_stops.size() : end_stops.size());
+  }
 
   // Creates an additional node for the given timetable location
   // and adds additional edges to/from this node.
@@ -133,30 +148,72 @@ osr::sharing_data prepare_sharing_data(n::timetable const& tt,
     return l_additional_node_idx;
   };
 
-  // Set start allowed in start area / location group.
+  // Allows the areas / location groups of one side, stop i in class i if the
+  // classes are on this side.
   auto tmp = osr::bitvec<osr::node_idx_t>{};
-  from_stop.apply(utl::overloaded{
-      [&](n::location_group_idx_t const from_lg) {
-        for (auto const& l : tt.location_group_locations_[from_lg]) {
-          frd.start_allowed_.set(add_tt_location(l), true);
+  auto const add_side = [&](std::span<n::flex_stop_t const> stops,
+                            osr::bitvec<osr::node_idx_t>& allowed,
+                            bool const with_classes) {
+    for (auto const [i, s] : utl::enumerate(stops)) {
+      auto const allow = [&](osr::node_idx_t const n) {
+        allowed.set(n, true);
+        if (with_classes) {
+          frd.additional_nodes_.classes_[n] |= osr::sharing_class_mask_t{1U}
+                                               << i;
         }
-      },
-      [&](n::flex_area_idx_t const from_area) {
-        fa.add_area(from_area, frd.start_allowed_, tmp);
-      }});
-
-  // Set end allowed in the alighting area / location group.
-  to_stop.apply(utl::overloaded{
-      [&](n::location_group_idx_t const to_lg) {
-        for (auto const& l : tt.location_group_locations_[to_lg]) {
-          frd.end_allowed_.set(add_tt_location(l), true);
-        }
-      },
-      [&](n::flex_area_idx_t const to_area) {
-        fa.add_area(to_area, frd.end_allowed_, tmp);
-      }});
+      };
+      s.apply(utl::overloaded{[&](n::location_group_idx_t const lg) {
+                                for (auto const& l :
+                                     tt.location_group_locations_[lg]) {
+                                  allow(add_tt_location(l));
+                                }
+                              },
+                              [&](n::flex_area_idx_t const area) {
+                                fa.for_each_node(area, tmp, allow);
+                              }});
+    }
+  };
+  add_side(start_stops, frd.start_allowed_, classes == class_side::kStart);
+  add_side(end_stops, frd.end_allowed_, classes == class_side::kEnd);
 
   return frd.to_sharing_data();
+}
+
+}  // namespace
+
+osr::sharing_data prepare_sharing_data(n::timetable const& tt,
+                                       osr::ways const& w,
+                                       osr::lookup const& lookup,
+                                       osr::platforms const* pl,
+                                       flex_areas const& fa,
+                                       platform_matches_t const* pl_matches,
+                                       mode_payload const id,
+                                       flex_routing_data& frd) {
+  auto const stop_seq =
+      tt.flex_stop_seq_[tt.flex_transport_stop_seq_[id.get_flex_transport()]];
+  auto const from_stop = stop_seq.at(id.get_from_stop());
+  auto const to_stop = stop_seq.at(id.get_to_stop());
+  return prepare_sharing_data(tt, w, lookup, pl, fa, pl_matches,
+                              std::span{&from_stop, 1U},
+                              std::span{&to_stop, 1U}, class_side::kNone, frd);
+}
+
+osr::sharing_data prepare_sharing_data(n::timetable const& tt,
+                                       osr::ways const& w,
+                                       osr::lookup const& lookup,
+                                       osr::platforms const* pl,
+                                       flex_areas const& fa,
+                                       platform_matches_t const* pl_matches,
+                                       flex_offset_routing const& r,
+                                       osr::direction const dir,
+                                       flex_routing_data& frd) {
+  auto const near = std::span{&r.near_, 1U};
+  auto const far = std::span{r.far_};
+  return dir == osr::direction::kForward
+             ? prepare_sharing_data(tt, w, lookup, pl, fa, pl_matches, near,
+                                    far, class_side::kEnd, frd)
+             : prepare_sharing_data(tt, w, lookup, pl, fa, pl_matches, far,
+                                    near, class_side::kStart, frd);
 }
 
 n::interval<n::day_idx_t> get_relevant_days(
@@ -263,6 +320,45 @@ flex_routings_t get_flex_routings(
   return routings;
 }
 
+std::vector<flex_offset_routing> get_flex_offset_routings(
+    n::timetable const& tt,
+    flex_routings_t const& routings,
+    osr::direction const dir) {
+  auto ret = std::vector<flex_offset_routing>{};
+  for (auto const& [key, transports] : routings) {
+    auto const& [seq_idx, stop_pair] = key;
+    auto const stops = tt.flex_stop_seq_[seq_idx];
+    auto const boarding = stops[stop_pair.first];
+    auto const alighting = stops[stop_pair.second];
+    auto const near = dir == osr::direction::kForward ? boarding : alighting;
+    auto const far = dir == osr::direction::kForward ? alighting : boarding;
+
+    // The routing of `near` that has `far` already, else one with room for it.
+    auto r = utl::find_if(ret, [&](flex_offset_routing const& x) {
+      return x.near_ == near && utl::find(x.far_, far) != end(x.far_);
+    });
+    if (r == end(ret)) {
+      r = utl::find_if(ret, [&](flex_offset_routing const& x) {
+        return x.near_ == near && x.far_.size() < osr::kMaxSharingClasses;
+      });
+    }
+    if (r == end(ret)) {
+      r = ret.emplace(
+          end(ret),
+          flex_offset_routing{.near_ = near, .far_ = {}, .transports_ = {}});
+    }
+
+    auto const cls = static_cast<std::size_t>(
+        std::distance(begin(r->far_), utl::find(r->far_, far)));
+    if (cls == r->far_.size()) {
+      r->far_.push_back(far);
+      r->transports_.emplace_back();
+    }
+    utl::concat(r->transports_[cls], transports);
+  }
+  return ret;
+}
+
 n::interval<n::unixtime_t> get_departure_window(n::timetable const& tt,
                                                 mode_payload const id,
                                                 n::unixtime_t const day,
@@ -314,34 +410,40 @@ void add_flex_td_offsets(osr::ways const& w,
       lookup, way_matches, osr::search_profile::kCarSharing, near_stops,
       near_stop_locations, dir, max_matching_distance);
 
-  auto const routings = get_flex_routings(tt, loc_rtree, start_time, pos.pos_,
-                                          dir, max, osr_params);
+  auto const routings = get_flex_offset_routings(
+      tt,
+      get_flex_routings(tt, loc_rtree, start_time, pos.pos_, dir, max,
+                        osr_params),
+      dir);
 
   stats.emplace(fmt::format("prepare_{}_FLEX_lookup", to_str(dir)),
                 UTL_GET_TIMING_MS(flex_lookup_timer));
 
-  for (auto const& [stop_seq, transports] : routings) {
+  for (auto const& r : routings) {
     UTL_START_TIMING(routing_timer);
 
-    auto const sharing_data = prepare_sharing_data(
-        tt, w, lookup, pl, fa, matches, transports.front(), frd);
+    auto const sharing_data =
+        prepare_sharing_data(tt, w, lookup, pl, fa, matches, r, dir, frd);
 
+    // One search for all far stops: result `cls * n_stops + i` reaches
+    // near_stops[i] in class `cls`, i.e. with the far stop r.far_[cls].
     auto state = osr::route_one_to_many(
         params, w, lookup, osr::search_profile::kCarSharing, pos,
         near_stop_locations, pos_match[osr::match_idx_t{0U}], near_stop_matches,
         max, dir, nullptr, &sharing_data, nullptr);
     auto const& paths = state->results();
+    auto const n_stops = near_stops.size();
 
     auto rides = std::vector<std::optional<flex_ride>>(paths.size());
-    for (auto i = 0U; i != paths.size(); ++i) {
-      if (!paths[i].has_value()) {
+    for (auto k = 0U; k != paths.size(); ++k) {
+      if (!paths[k].has_value()) {
         continue;
       }
-      auto const rental = state->rental_durations(i);
+      auto const rental = state->rental_durations(k);
       if (!rental.has_value()) {
         continue;
       }
-      rides[i] = flex_ride{
+      rides[k] = flex_ride{
           .pickup_ =
               std::chrono::duration_cast<n::duration_t>(rental->ride_start_),
           .drop_off_ =
@@ -351,9 +453,9 @@ void add_flex_td_offsets(osr::ways const& w,
     // Store osr routing state for later path reconstruction.
     if (states != nullptr) {
       auto dest_idx = hash_map<n::location_idx_t, std::size_t>{};
-      for (auto const [i, l] : utl::enumerate(near_stops)) {
-        if (rides[i].has_value()) {
-          dest_idx.emplace(l, i);
+      for (auto k = 0U; k != rides.size(); ++k) {
+        if (rides[k].has_value()) {
+          dest_idx.emplace(near_stops[k % n_stops], k % n_stops);
         }
       }
 
@@ -363,10 +465,12 @@ void add_flex_td_offsets(osr::ways const& w,
             one_to_many_search{std::move(state), std::move(dest_idx),
                                std::move(frd.additional_nodes_)});
 
-        for (auto const id : transports) {
-          states
-              ->by_mode_[transport_mode(api::ModeEnum::FLEX, id.to_payload())] =
-              search_idx;
+        for (auto const [cls, transports] : utl::enumerate(r.transports_)) {
+          for (auto const id : transports) {
+            states->by_mode_[transport_mode(api::ModeEnum::FLEX,
+                                            id.to_payload())] = {
+                .search_idx_ = search_idx, .offset_ = cls * n_stops};
+          }
         }
       }
     }
@@ -375,23 +479,28 @@ void add_flex_td_offsets(osr::ways const& w,
     // start of the whole access / egress), in both search directions: that is
     // how nigiri's td lookup reads them.
     auto const day_idx_iv = get_relevant_days(tt, start_time);
-    for (auto const id : transports) {
-      auto const t = id.get_flex_transport();
-      for (auto const day_idx : day_idx_iv) {
-        if (!tt.bitfields_[tt.flex_transport_traffic_days_[t]].test(
-                to_idx(day_idx))) {
-          continue;
-        }
+    for (auto const [cls, transports] : utl::enumerate(r.transports_)) {
+      for (auto const id : transports) {
+        auto const t = id.get_flex_transport();
+        for (auto const day_idx : day_idx_iv) {
+          if (!tt.bitfields_[tt.flex_transport_traffic_days_[t]].test(
+                  to_idx(day_idx))) {
+            continue;
+          }
 
-        auto const day =
-            tt.internal_interval().from_ + to_idx(day_idx) * date::days{1U};
-        for (auto const [p, ride, l] : utl::zip(paths, rides, near_stops)) {
-          if (ride.has_value()) {
+          auto const day =
+              tt.internal_interval().from_ + to_idx(day_idx) * date::days{1U};
+          for (auto const [i, l] : utl::enumerate(near_stops)) {
+            auto const k = cls * n_stops + i;
+            auto const& ride = rides[k];
+            if (!ride.has_value()) {
+              continue;
+            }
             // Travel time (not the search cost, which includes penalties),
             // rounded up like every other offset: an offset promises the
             // stop can be reached after this time.
             auto const duration = n::duration_t{static_cast<n::duration_t::rep>(
-                std::ceil(p->duration_.count() / 60.0))};
+                std::ceil(paths[k]->duration_.count() / 60.0))};
             auto const dep_iv = get_departure_window(tt, id, day, *ride);
 
             if (dep_iv.from_ < dep_iv.to_ &&
@@ -409,11 +518,10 @@ void add_flex_td_offsets(osr::ways const& w,
       }
     }
 
-    auto const& [seq_idx, stop_pair] = stop_seq;
     stats.emplace(
         fmt::format(
             "prepare_{}_FLEX_{}", to_str(dir),
-            tt.flex_stop_seq_[seq_idx][stop_pair.first].apply(utl::overloaded{
+            r.near_.apply(utl::overloaded{
                 [&](n::location_group_idx_t const g) {
                   return tt.get_default_translation(tt.location_group_name_[g]);
                 },

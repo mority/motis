@@ -37,13 +37,14 @@ precomputed_route one_to_many_view::find(n::location_idx_t const leg_from,
     return {};
   }
 
-  auto const& s = side->searches_[it->second];
+  auto const& s = side->searches_[it->second.search_idx_];
   auto const d = s.dest_idx_.find(target);
   if (d == end(s.dest_idx_)) {
     return {};
   }
 
-  return {s.state_.get(), d->second, &s.flex_additional_nodes_};
+  return {s.state_.get(), it->second.offset_ + d->second,
+          &s.flex_additional_nodes_};
 }
 
 }  // namespace motis

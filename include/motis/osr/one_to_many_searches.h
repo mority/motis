@@ -22,8 +22,16 @@ struct one_to_many_search {
 };
 
 struct one_to_many_side {
+  // The search with a mode's paths and where its destinations start in the
+  // search's results: a classed flex search (osr::sharing_data::classes_)
+  // holds one block of destinations per class.
+  struct mode_results {
+    std::size_t search_idx_;
+    std::size_t offset_{0U};
+  };
+
   std::vector<one_to_many_search> searches_;
-  hash_map<transport_mode_t, std::size_t> by_mode_;
+  hash_map<transport_mode_t, mode_results> by_mode_;
 };
 
 struct one_to_many_searches {

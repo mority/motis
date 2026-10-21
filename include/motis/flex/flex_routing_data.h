@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+#include <cstdint>
 #include <vector>
 
 #include "osr/routing/additional_edge.h"
@@ -17,6 +19,8 @@ struct flex_additional_nodes {
     locations_.clear();
     coordinates_.clear();
     edges_.clear();
+    classes_.clear();
+    n_classes_ = 0U;
   }
 
   nigiri::location_idx_t get(osr::node_idx_t const n) const {
@@ -26,13 +30,21 @@ struct flex_additional_nodes {
   osr::sharing_data to_sharing_data() const {
     return {.additional_node_offset_ = offset_,
             .additional_node_coordinates_ = coordinates_,
-            .additional_edges_ = edges_};
+            .additional_edges_ = edges_,
+            .classes_ = n_classes_ == 0U ? nullptr : &classes_,
+            .n_classes_ = std::max(n_classes_, std::uint8_t{1U})};
   }
 
   osr::node_idx_t::value_t offset_{};
   std::vector<nigiri::location_idx_t> locations_;
   std::vector<geo::latlng> coordinates_;
   osr::hash_map<osr::node_idx_t, std::vector<osr::additional_edge>> edges_;
+
+  // Classes of the far side of a classed street routing
+  // (osr::sharing_data::classes_, 0 classes: none). Kept with the additional
+  // nodes because reconstructing a path needs both.
+  osr::hash_map<osr::node_idx_t, osr::sharing_class_mask_t> classes_;
+  std::uint8_t n_classes_{0U};
 };
 
 struct flex_routing_data {

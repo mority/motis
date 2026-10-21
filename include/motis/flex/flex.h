@@ -1,5 +1,7 @@
 #pragma once
 
+#include <vector>
+
 #include "osr/location.h"
 #include "osr/routing/profile.h"
 #include "osr/types.h"
@@ -43,6 +45,33 @@ flex_routings_t get_flex_routings(nigiri::timetable const&,
                                   osr::direction,
                                   std::chrono::seconds max,
                                   osr_parameters const&);
+
+// One street routing for the offsets of one search direction: the stop the
+// query position takes part in (boarding stop forward, alighting stop
+// backward) and the stops at the other end of the ride, one osr class each
+// (osr::sharing_data::classes_). The routings of all (boarding, alighting)
+// pairs with that stop share the walk to and the ride with the vehicle; only
+// the walk after the vehicle (search direction) is per class.
+struct flex_offset_routing {
+  nigiri::flex_stop_t near_;
+  std::vector<nigiri::flex_stop_t> far_;  // class i: far_[i]
+  std::vector<std::vector<mode_payload>> transports_;  // per class
+};
+
+// Groups the pair routings of `get_flex_routings` by the stop at the query
+// position's side, at most osr::kMaxSharingClasses far stops per routing.
+std::vector<flex_offset_routing> get_flex_offset_routings(
+    nigiri::timetable const&, flex_routings_t const&, osr::direction);
+
+osr::sharing_data prepare_sharing_data(nigiri::timetable const&,
+                                       osr::ways const&,
+                                       osr::lookup const&,
+                                       osr::platforms const*,
+                                       flex_areas const&,
+                                       platform_matches_t const*,
+                                       flex_offset_routing const&,
+                                       osr::direction,
+                                       flex_routing_data&);
 
 // When the ride starts (pickup) and ends (drop-off), relative to the start
 // of the whole access / egress / direct path in travel direction.
