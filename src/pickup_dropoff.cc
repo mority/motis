@@ -224,7 +224,9 @@ pickup_dropoff_points get_pickup_dropoff_points(
       [&](state& s, std::size_t const i) {
         auto const l =
             n::location_idx_t{static_cast<n::location_idx_t::value_t>(i)};
-        if (n::is_special(l)) {
+        // Time-dependent offsets to a parent don't reach its children.
+        if (n::is_special(l) || (!tt.locations_.children_[l].empty() &&
+                                 tt.location_routes_[l].empty())) {
           return result{};
         }
 

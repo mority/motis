@@ -30,6 +30,8 @@ stop_id,stop_name,stop_lat,stop_lon,location_type,parent_station,platform_code
 DA,DA Hbf,49.87260,8.63085,1,,
 DA_10,DA Hbf,49.87336,8.62926,0,DA,10
 DA_N,DA Hbf Nord,49.87420,8.62940,0,,
+DA_BUS,DA Hbf Bus,49.87230,8.63160,1,,
+DA_BUS_1,DA Hbf Bus,49.87220,8.63180,0,DA_BUS,1
 
 # calendar.txt
 service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date
@@ -43,6 +45,7 @@ FLEX,DB,Flex,,,715
 # trips.txt
 route_id,service_id,trip_id,trip_headsign,block_id
 BUS,S,BUS,,
+BUS,S,BUS2,,
 FLEX,S,FLEX,,
 )";
 
@@ -51,6 +54,8 @@ constexpr auto const kStopTimes = R"(
 trip_id,arrival_time,departure_time,stop_id,location_group_id,location_id,stop_sequence,start_pickup_drop_off_window,end_pickup_drop_off_window,pickup_type,drop_off_type
 BUS,10:00:00,10:00:00,DA_10,,,0,,,0,0
 BUS,10:05:00,10:05:00,DA_N,,,1,,,0,0
+BUS2,11:00:00,11:00:00,DA_BUS,,,0,,,0,0
+BUS2,11:05:00,11:05:00,DA_N,,,1,,,0,0
 )";
 
 constexpr auto const kFlexArea = R"(
@@ -115,6 +120,11 @@ TEST(motis, pickup_dropoff_points_flex) {
   auto const da = get_location(d, "DA_10");
   ASSERT_FALSE(p.drop_off_[da].empty());
   ASSERT_FALSE(p.pickup_[da].empty());
+
+  // DA: parent without own events. DA_BUS: parent served directly (against
+  // the GTFS spec, but nigiri loads it).
+  EXPECT_TRUE(p.drop_off_[get_location(d, "DA")].empty());
+  EXPECT_FALSE(p.drop_off_[get_location(d, "DA_BUS")].empty());
 
   // Not on the service road in the tunnel along the tracks (level=-1).
   auto const tunnel = osr::osm_node_idx_t{5256701321U};
