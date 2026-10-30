@@ -21,6 +21,7 @@
 #include "motis/fwd.h"
 #include "motis/gbfs/data.h"
 #include "motis/match_platforms.h"
+#include "motis/pickup_dropoff.h"
 #include "motis/rt/auser.h"
 #include "motis/types.h"
 
@@ -88,6 +89,7 @@ struct data {
   void load_geocoder();
   void load_matches();
   void load_way_matches();
+  void load_pickup_dropoff();
   void load_reverse_geocoder();
   void load_tiles();
   void load_auser_updater(std::string_view, config::timetable::dataset const&);
@@ -101,9 +103,9 @@ struct data {
     return std::tie(config_, initial_response_, t_, adr_ext_, f_, tz_, r_, tc_,
                     w_, pl_, l_, elevations_, tt_, tbd_, tags_, location_rtree_,
                     elevator_nodes_, elevator_osm_mapping_, shapes_,
-                    railviz_static_, matches_, way_matches_, rt_, gbfs_,
-                    odm_bounds_, ride_sharing_bounds_, flex_areas_, metrics_,
-                    auser_
+                    railviz_static_, matches_, way_matches_, pickup_dropoff_,
+                    rt_, gbfs_, odm_bounds_, ride_sharing_bounds_, flex_areas_,
+                    metrics_, auser_
 #if defined(NIGIRI_CUDA)
                     ,
                     gpu_tt_, gpu_pool_
@@ -136,6 +138,7 @@ struct data {
   cista::wrapped<vector_map<nigiri::location_idx_t, osr::platform_idx_t>>
       matches_;
   ptr<way_matches_storage> way_matches_;
+  cista::wrapped<pickup_dropoff_points> pickup_dropoff_;
   ptr<tiles_data> tiles_;
   std::shared_ptr<rt> rt_{std::make_shared<rt>()};
   std::shared_ptr<gbfs::gbfs_data> gbfs_{};

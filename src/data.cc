@@ -147,6 +147,8 @@ data::data(std::filesystem::path p, config const& c)
   verify_version(c.use_street_routing(), "osr", osr_version());
   verify_version(c.use_street_routing() && c.timetable_, "matches",
                  matches_version());
+  verify_version(c.use_pickup_dropoff_points(), "pickup_dropoff",
+                 pickup_dropoff_version());
   verify_version(c.tiles_.has_value(), "tiles", tiles_version());
   verify_version(c.osr_footpath_, "osr_footpath", osr_footpath_version());
 
@@ -218,6 +220,9 @@ data::data(std::filesystem::path p, config const& c)
     if (c.use_street_routing() && c.timetable_) {
       load_matches();
       load_way_matches();
+    }
+    if (c.use_pickup_dropoff_points()) {
+      load_pickup_dropoff();
     }
   });
 
@@ -430,6 +435,11 @@ void data::load_way_matches() {
         path_, cista::mmap::protection::READ,
         config_.timetable_.value().preprocess_max_matching_distance_});
   }
+}
+
+void data::load_pickup_dropoff() {
+  pickup_dropoff_ =
+      cista::read<pickup_dropoff_points>(path_ / "pickup_dropoff.bin");
 }
 
 void data::load_tiles() {

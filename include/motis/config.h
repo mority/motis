@@ -34,6 +34,7 @@ struct config {
   bool has_elevators() const;
   bool has_rt_feeds() const;
   bool use_street_routing() const;
+  bool use_pickup_dropoff_points() const;
 
   bool operator==(config const&) const = default;
 
@@ -126,6 +127,8 @@ struct config {
       std::optional<shapes_debug> debug_{};
     };
 
+    enum class pickup_dropoff { none, flex, all };
+
     bool operator==(timetable const&) const = default;
 
     std::string first_day_{"TODAY"};
@@ -146,6 +149,7 @@ struct config {
     std::uint16_t default_transfer_time_{2};
     double max_matching_distance_{25.0};
     double preprocess_max_matching_distance_{250.0};
+    pickup_dropoff pickup_dropoff_points_{pickup_dropoff::flex};
     std::optional<std::string> default_timezone_{};
     std::map<std::string, dataset> datasets_{};
     std::optional<std::filesystem::path> assistance_times_{};

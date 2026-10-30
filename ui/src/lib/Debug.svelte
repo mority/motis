@@ -82,6 +82,14 @@
 		return await get(`/api/debug/flex?min=${min.lat},${min.lng}&max=${max.lat},${max.lng}`);
 	};
 
+	const getPickupDropoff = async (bounds: maplibregl.LngLatBounds) => {
+		const min = bounds.getSouthWest();
+		const max = bounds.getNorthEast();
+		return await get(
+			`/api/debug/pickup_dropoff?min=${min.lat},${min.lng}&max=${max.lat},${max.lng}`
+		);
+	};
+
 	const getElevators = async (bounds: maplibregl.LngLatBounds) => {
 		return await post('/api/elevators', bounds.toArray().flat());
 	};
@@ -118,6 +126,11 @@
 	);
 	let flex = $derived(
 		bounds && debug ? getFlex(maplibregl.LngLatBounds.convert(bounds)) : undefined
+	);
+	let pickupDropoff = $derived(
+		bounds && debug && zoom > 14
+			? getPickupDropoff(maplibregl.LngLatBounds.convert(bounds))
+			: undefined
 	);
 
 	const parseElevator = (e: { outOfService: string | [string, string][] }) => {
@@ -550,6 +563,50 @@
 						'text-color': '#f00'
 					}}
 				/>
+			</GeoJSON>
+		{/await}
+	{/if}
+
+	{#if pickupDropoff}
+		{#await pickupDropoff then p}
+			<GeoJSON id="pickup-dropoff" data={p}>
+				<Layer
+					id="pickup-dropoff-links"
+					type="line"
+					filter={['in', 'type', 'drop_off_link', 'pickup_link']}
+					layout={{ 'line-cap': 'round' }}
+					paint={{
+						'line-color': ['match', ['get', 'type'], 'drop_off_link', '#dc2626', '#2563eb'],
+						'line-width': 2,
+						'line-dasharray': [2, 2]
+					}}
+				/>
+				<Layer
+					id="pickup-dropoff-points"
+					type="circle"
+					filter={['in', 'type', 'drop_off', 'pickup']}
+					layout={{ 'circle-sort-key': ['match', ['get', 'type'], 'drop_off', 0, 1] }}
+					paint={{
+						'circle-color': ['match', ['get', 'type'], 'drop_off', '#dc2626', '#2563eb'],
+						'circle-radius': ['match', ['get', 'type'], 'drop_off', 8, 4],
+						'circle-stroke-color': '#fff',
+						'circle-stroke-width': 1
+					}}
+				>
+					<Popup trigger="click" children={propertiesTable} />
+				</Layer>
+				<Layer
+					id="pickup-dropoff-locations"
+					type="circle"
+					filter={['==', 'type', 'location']}
+					layout={{}}
+					paint={{
+						'circle-color': '#000',
+						'circle-radius': 4
+					}}
+				>
+					<Popup trigger="click" children={propertiesTable} />
+				</Layer>
 			</GeoJSON>
 		{/await}
 	{/if}

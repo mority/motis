@@ -70,6 +70,7 @@ timetable:                          # if not set, no timetable will be loaded
   max_matching_distance: 25.0       # maximum distance from geolocation to next OSM ways that will be found
   default_transfer_time: 2          # default transfer time applied when no transfer is found from datasets
   preprocess_max_matching_distance: 250.0 # max. distance for preprocessing matches from nigiri locations (stops) to OSM ways to speed up querying (set to 0 (default) to disable)
+  pickup_dropoff_points: flex      # car pickup/drop-off points next to stops: none, flex (stops in GTFS-Flex location groups or near flex areas), all (every stop)
   datasets:                         # map of tag -> dataset
     ch:                             # the tag will be used as prefix for stop IDs and trip IDs with `_` as divider, so `_` cannot be part of the dataset tag
       path: ch_opentransportdataswiss.gtfs.zip

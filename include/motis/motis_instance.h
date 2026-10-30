@@ -32,6 +32,7 @@
 #include "motis/endpoints/one_to_many.h"
 #include "motis/endpoints/one_to_many_post.h"
 #include "motis/endpoints/osr_routing.h"
+#include "motis/endpoints/pickup_dropoff.h"
 #include "motis/endpoints/platforms.h"
 #include "motis/endpoints/refresh_itinerary.h"
 #include "motis/endpoints/routing.h"
@@ -103,6 +104,7 @@ struct motis_instance {
     POST<ep::graph>("/api/graph", d);
     GET<ep::transfers>("/api/debug/transfers", d);
     GET<ep::flex_locations>("/api/debug/flex", d);
+    GET<ep::pickup_dropoff>("/api/debug/pickup_dropoff", d);
     GET<ep::levels>("/api/v1/map/levels", d);
     GET<ep::initial>("/api/v1/map/initial", d);
     GET<ep::reverse_geocode>("/api/v1/reverse-geocode", d);

@@ -51,6 +51,7 @@
 #include "motis/compute_footpaths.h"
 #include "motis/data.h"
 #include "motis/hashes.h"
+#include "motis/pickup_dropoff.h"
 #include "motis/route_shapes.h"
 #include "motis/tag_lookup.h"
 #include "motis/tt_location_rtree.h"
@@ -507,6 +508,33 @@ void import(config const& c,
                  cista::build_hash(c.timetable_.value_or(config::timetable{})
                                        .max_matching_distance_)}}};
 
+  auto pickup_dropoff = task{
+      "pickup_dropoff",
+      {&tt, &osr, &matches},
+      c.use_pickup_dropoff_points(),
+      [&]() {
+        auto d = data{data_path};
+        d.load_tt("tt.bin");
+        d.load_osr();
+        d.load_matches();
+
+        auto const& t = *c.timetable_;
+        cista::write(data_path / "pickup_dropoff.bin",
+                     get_pickup_dropoff_points(
+                         *d.tt_, *d.w_, *d.l_, *d.pl_, *d.matches_,
+                         t.pickup_dropoff_points_ ==
+                             config::timetable::pickup_dropoff::all,
+                         t.max_matching_distance_));
+      },
+      {tt_hash, osm_hash, osr_version(), n_version(), matches_version(),
+       pickup_dropoff_version(),
+       std::pair{"pickup_dropoff_points",
+                 cista::build_hash(c.timetable_.value_or(config::timetable{})
+                                       .pickup_dropoff_points_)},
+       std::pair{"max_matching_distance",
+                 cista::build_hash(c.timetable_.value_or(config::timetable{})
+                                       .max_matching_distance_)}}};
+
   auto osr_footpath = task{
       "osr_footpath",
       {&tt, &osr, &matches},
@@ -647,9 +675,16 @@ void import(config const& c,
       },
       {tiles_version(), osm_hash, tiles_hash}};
 
-  auto all_tasks = std::vector{&tiles,        &osr,     &adr,
-                               &tt,           &tbd,     &adr_extend,
-                               &osr_footpath, &matches, &route_shapes_task};
+  auto all_tasks = std::vector{&tiles,
+                               &osr,
+                               &adr,
+                               &tt,
+                               &tbd,
+                               &adr_extend,
+                               &osr_footpath,
+                               &matches,
+                               &pickup_dropoff,
+                               &route_shapes_task};
   auto todo = std::set<task*>{};
   if (task_filter.has_value()) {
     auto q = std::vector<task*>{};

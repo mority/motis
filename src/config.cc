@@ -299,4 +299,9 @@ bool config::use_street_routing() const {
       street_routing_);
 }
 
+bool config::use_pickup_dropoff_points() const {
+  return timetable_.has_value() && use_street_routing() &&
+         timetable_->pickup_dropoff_points_ != timetable::pickup_dropoff::none;
+}
+
 }  // namespace motis

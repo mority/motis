@@ -60,6 +60,7 @@ timetable:
   default_transfer_time: 2
   max_matching_distance: 25.000000
   preprocess_max_matching_distance: 250.000000
+  pickup_dropoff_points: flex
   datasets:
     de:
       path: delfi.gtfs.zip

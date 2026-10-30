@@ -28,6 +28,9 @@ constexpr auto const tbd_version = []() {
 constexpr auto const matches_version = []() {
   return meta_entry_t{"matches_bin_ver", 7U};
 };
+constexpr auto const pickup_dropoff_version = []() {
+  return meta_entry_t{"pickup_dropoff_bin_ver", 1U};
+};
 constexpr auto const tiles_version = []() {
   return meta_entry_t{"tiles_bin_ver", 2U};
 };
