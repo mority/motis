@@ -32,6 +32,8 @@ DA_10,DA Hbf,49.87336,8.62926,0,DA,10
 DA_N,DA Hbf Nord,49.87420,8.62940,0,,
 DA_BUS,DA Hbf Bus,49.87230,8.63160,1,,
 DA_BUS_1,DA Hbf Bus,49.87220,8.63180,0,DA_BUS,1
+DA_IDLE,DA Hbf Idle,49.87230,8.63160,0,,
+DA_FLEX_ONLY,DA Hbf Flex,49.87230,8.63160,0,,
 
 # calendar.txt
 service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date
@@ -39,12 +41,13 @@ S,1,1,1,1,1,1,1,20190501,20190503
 
 # routes.txt
 route_id,agency_id,route_short_name,route_long_name,route_desc,route_type
+RAIL,DB,RE,,,2
 BUS,DB,Bus,,,3
 FLEX,DB,Flex,,,715
 
 # trips.txt
 route_id,service_id,trip_id,trip_headsign,block_id
-BUS,S,BUS,,
+RAIL,S,RAIL,,
 BUS,S,BUS2,,
 FLEX,S,FLEX,,
 )";
@@ -52,8 +55,8 @@ FLEX,S,FLEX,,
 constexpr auto const kStopTimes = R"(
 # stop_times.txt
 trip_id,arrival_time,departure_time,stop_id,location_group_id,location_id,stop_sequence,start_pickup_drop_off_window,end_pickup_drop_off_window,pickup_type,drop_off_type
-BUS,10:00:00,10:00:00,DA_10,,,0,,,0,0
-BUS,10:05:00,10:05:00,DA_N,,,1,,,0,0
+RAIL,10:00:00,10:00:00,DA_10,,,0,,,0,0
+RAIL,10:05:00,10:05:00,DA_N,,,1,,,0,0
 BUS2,11:00:00,11:00:00,DA_BUS,,,0,,,0,0
 BUS2,11:05:00,11:05:00,DA_N,,,1,,,0,0
 )";
@@ -77,6 +80,7 @@ da_group,DA Flex Group
 # location_group_stops.txt
 location_group_id,stop_id
 da_group,DA_N
+da_group,DA_FLEX_ONLY
 )";
 
 enum class flex_data { kNone, kArea, kGroup };
@@ -162,4 +166,31 @@ TEST(motis, pickup_dropoff_points_all) {
   auto const da = get_location(d, "DA_10");
   EXPECT_FALSE(d.pickup_dropoff_->drop_off_[da].empty());
   EXPECT_FALSE(d.pickup_dropoff_->pickup_[da].empty());
+}
+
+TEST(motis, pickup_dropoff_points_road_served) {
+  auto const d =
+      import_with("test/data_pickup_dropoff_road",
+                  config::timetable::pickup_dropoff::all, flex_data::kGroup);
+  auto const& p = *d.pickup_dropoff_;
+  auto const& w = *d.w_;
+
+  auto const expect_kerb = [&](std::string_view const id) {
+    auto const l = get_location(d, id);
+    ASSERT_FALSE(p.pickup_[l].empty()) << id;
+    ASSERT_FALSE(p.drop_off_[l].empty()) << id;
+    for (auto const& points : {p.pickup_[l], p.drop_off_[l]}) {
+      for (auto const& x : points) {
+        EXPECT_TRUE(w.r_->node_properties_[x.node_].is_car_accessible()) << id;
+        EXPECT_LE(x.walk_, std::chrono::seconds{21}) << id;  // 25 m
+      }
+    }
+  };
+  expect_kerb("DA_BUS");
+  expect_kerb("DA_FLEX_ONLY");
+
+  // No service and not in a location group.
+  auto const idle = get_location(d, "DA_IDLE");
+  EXPECT_TRUE(p.pickup_[idle].empty());
+  EXPECT_TRUE(p.drop_off_[idle].empty());
 }

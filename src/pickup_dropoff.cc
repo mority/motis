@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <limits>
 #include <optional>
 #include <tuple>
 #include <vector>
@@ -80,6 +82,53 @@ bool can_stop(osr::ways::routing const& r, osr::node_idx_t const x) {
                   is_ground_level(p.from_level()) &&
                   is_ground_level(p.to_level());
          });
+}
+
+// The timetable already says a road vehicle stops here.
+bool is_road_served(n::timetable const& tt, n::location_idx_t const l) {
+  return !tt.location_location_groups_[l].empty() ||
+         utl::any_of(tt.location_routes_[l], [&](n::route_idx_t const r) {
+           auto const c = tt.route_clasz_[r];
+           return c == n::clasz::kBus || c == n::clasz::kCoach ||
+                  c == n::clasz::kRideSharing || c == n::clasz::kODM;
+         });
+}
+
+// Nearest node of each car road matched at `pos`, with the walk to that road.
+std::vector<pickup_dropoff_point> get_kerb_points(
+    osr::lookup const& lookup,
+    osr::location const& pos,
+    osr::direction const dir,
+    double const max_matching_distance,
+    double const max_road_dist,
+    state& s) {
+  s.match_.clear();
+  lookup.match<osr::car>(osr::car::parameters{}, pos, false, dir,
+                         max_matching_distance, nullptr, s.match_);
+  auto const m = s.match_[osr::match_idx_t{0U}];
+
+  auto points = std::vector<pickup_dropoff_point>{};
+  for (auto j = 0U; j != m.size(); ++j) {
+    auto const l = m.left(j);
+    auto const r = m.right(j);
+    auto const& nc =
+        !r.valid() || (l.valid() && l.dist_to_node_ < r.dist_to_node_) ? l : r;
+    if (nc.valid() && m.dist_to_way_[j] <= max_road_dist) {
+      points.push_back(
+          {nc.node_,
+           osr::duration_t{static_cast<osr::duration_t::rep>(
+               std::round(m.dist_to_way_[j] / osr_parameters::kFootSpeed))}});
+    }
+  }
+  utl::erase_duplicates(
+      points,
+      [](pickup_dropoff_point const& a, pickup_dropoff_point const& b) {
+        return std::tie(a.node_, a.walk_) < std::tie(b.node_, b.walk_);
+      },
+      [](pickup_dropoff_point const& a, pickup_dropoff_point const& b) {
+        return a.node_ == b.node_;
+      });
+  return points;
 }
 
 // Car-accessible nodes within walking range of `pos`. Forward: walk from
@@ -224,24 +273,41 @@ pickup_dropoff_points get_pickup_dropoff_points(
       [&](state& s, std::size_t const i) {
         auto const l =
             n::location_idx_t{static_cast<n::location_idx_t::value_t>(i)};
-        // Time-dependent offsets to a parent don't reach its children.
-        if (n::is_special(l) || (!tt.locations_.children_[l].empty() &&
-                                 tt.location_routes_[l].empty())) {
+        auto const in_group = !tt.location_location_groups_[l].empty();
+        // No service at all, or a parent: time-dependent offsets to a parent
+        // don't reach its children.
+        if (n::is_special(l) ||
+            (tt.location_routes_[l].empty() &&
+             (!in_group || !tt.locations_.children_[l].empty()))) {
           return result{};
         }
 
         auto const pos = get_loc(tt, w, pl, matches, l);
-        if (!all_locations && tt.location_location_groups_[l].empty() &&
+        if (!all_locations && !in_group &&
             !is_near_flex_area(tt, pos.pos_, max_dist)) {
           return result{};
         }
 
-        return result{.pickup_ = get_points(w, lookup, pos, max_dist,
-                                            osr::direction::kForward,
-                                            max_matching_distance, s),
-                      .drop_off_ = get_points(w, lookup, pos, max_dist,
-                                              osr::direction::kBackward,
-                                              max_matching_distance, s)};
+        auto const road_served = is_road_served(tt, l);
+        auto const get_stop_points = [&](osr::direction const dir) {
+          if (road_served) {
+            auto kerb = get_kerb_points(lookup, pos, dir, max_matching_distance,
+                                        max_matching_distance, s);
+            if (!kerb.empty()) {
+              return kerb;
+            }
+          }
+          auto points = get_points(w, lookup, pos, max_dist, dir,
+                                   max_matching_distance, s);
+          // The timetable promises service, so take any road it can find.
+          return points.empty() && in_group
+                     ? get_kerb_points(lookup, pos, dir, max_matching_distance,
+                                       std::numeric_limits<double>::infinity(),
+                                       s)
+                     : points;
+        };
+        return result{.pickup_ = get_stop_points(osr::direction::kForward),
+                      .drop_off_ = get_stop_points(osr::direction::kBackward)};
       },
       [&](std::size_t, result&& r) {
         ret.pickup_.emplace_back(r.pickup_);
