@@ -131,6 +131,7 @@ int batch(int ac, char** av) {
   auto data_path = fs::path{"data"};
   auto queries_path = fs::path{"queries.txt"};
   auto responses_path = fs::path{"responses.txt"};
+  auto times_path = fs::path{};
   auto n_threads = std::thread::hardware_concurrency();
   auto rt = false;
 
@@ -142,6 +143,9 @@ int batch(int ac, char** av) {
        "queries file")  //
       ("responses,r", po::value(&responses_path)->default_value(responses_path),
        "response file")  //
+      ("times,t", po::value(&times_path),
+       "optional: write the response time of every query in microseconds, "
+       "one line per query in query order")  //
       ("rt", po::bool_switch(&rt),
        "apply a canned rt update (dump_rt/ in the working directory, written "
        "by a server run with an existing dump_rt directory) before running "
@@ -179,9 +183,20 @@ int batch(int ac, char** av) {
   struct state {};
 
   auto out = std::ofstream{responses_path};
+  auto times_out = std::ofstream{};
+  if (!times_path.empty()) {
+    times_out.open(times_path);
+  }
   auto m = motis_instance{net::default_exec{}, d, c, ""};
+  struct result {
+    std::uint64_t ms_;
+    std::uint64_t us_;
+    std::string response_;
+  };
+
   auto const compute_response = [&](state&, std::size_t const id) {
     UTL_START_TIMING(request);
+    auto const start = std::chrono::steady_clock::now();
     auto response = std::string{};
     try {
       m.qr_(
@@ -210,7 +225,12 @@ int batch(int ac, char** av) {
     } catch (std::exception const& e) {
       std::cerr << "ERROR IN QUERY " << id << ": " << e.what() << "\n";
     }
-    return std::pair{UTL_GET_TIMING_MS(request), std::move(response)};
+    auto const us = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - start)
+            .count());
+    return result{static_cast<std::uint64_t>(UTL_GET_TIMING_MS(request)), us,
+                  std::move(response)};
   };
 
   auto const pt = utl::activate_progress_tracker("batch");
@@ -218,10 +238,12 @@ int batch(int ac, char** av) {
   auto const start_batch = std::chrono::steady_clock::now();
   utl::parallel_ordered_collect_threadlocal<state>(
       queries.size(), compute_response,
-      [&](std::size_t const id,
-          std::pair<std::uint64_t, std::string> const& s) {
-        response_time.add(id, s.first);
-        out << s.second << "\n";
+      [&](std::size_t const id, result const& s) {
+        response_time.add(id, s.ms_);
+        out << s.response_ << "\n";
+        if (times_out.is_open()) {
+          times_out << s.us_ << "\n";
+        }
       },
       pt->update_fn(), utl::parallel_error_strategy::QUIT_EXEC, n_threads);
   fmt::println("Processed {} queries in {:%T}", queries.size(),
