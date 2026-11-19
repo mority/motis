@@ -7,6 +7,10 @@
 
 namespace motis {
 
+bool has_traffic(nigiri::timetable const&,
+                 nigiri::rt_timetable const*,
+                 nigiri::location_idx_t);
+
 std::vector<nigiri::location_idx_t> get_stops_with_traffic(
     nigiri::timetable const&,
     nigiri::rt_timetable const*,

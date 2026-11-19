@@ -268,6 +268,32 @@ bool include_rental_provider(
                                   end(*rental_providers));
 }
 
+// Stops at the same place as a reached stop that the search didn't reach.
+std::vector<n::location_idx_t> unreached_equivalents(
+    n::timetable const& tt,
+    n::rt_timetable const* rtt,
+    std::vector<n::location_idx_t> const& stops,
+    std::vector<std::optional<osr::path>> const& paths) {
+  auto reached = hash_set<n::location_idx_t>{};
+  for (auto const [l, p] : utl::zip(stops, paths)) {
+    if (p.has_value()) {
+      reached.emplace(l);
+    }
+  }
+  auto missing = std::vector<n::location_idx_t>{};
+  for (auto const l : reached) {
+    n::routing::for_each_meta(
+        tt, nullptr, n::routing::location_match_mode::kEquivalent, l,
+        [&](n::location_idx_t const x) {
+          if (!reached.contains(x) && has_traffic(tt, rtt, x)) {
+            missing.emplace_back(x);
+          }
+        });
+  }
+  utl::erase_duplicates(missing);
+  return missing;
+}
+
 std::vector<n::routing::offset> get_offsets(
     routing const& r,
     n::rt_timetable const* rtt,
@@ -374,7 +400,44 @@ std::vector<n::routing::offset> get_offsets(
         }
       }
 
-      return paths;
+      auto reached =
+          std::vector<std::pair<n::location_idx_t, osr::duration_t>>{};
+      for (auto const [path, l] : utl::zip(paths, near_stops)) {
+        if (path.has_value()) {
+          reached.emplace_back(l, path->duration_);
+        }
+      }
+
+      // All stops of a place or none: an equivalent of a reached stop counts
+      // even beyond max.
+      auto const missing =
+          unreached_equivalents(*r.tt_, rtt, near_stops, paths);
+      if (missing.empty()) {
+        return reached;
+      }
+      auto const missing_locations =
+          utl::to_vec(missing, [&](n::location_idx_t const l) {
+            return stop_to_osr_location(r, l);
+          });
+      auto const missing_matches = get_reverse_platform_way_matches(
+          *r.l_, r.way_matches_, p, missing, missing_locations, dir,
+          max_matching_distance);
+      auto const equivalent_max =
+          max + std::chrono::minutes{
+                    r.config_.timetable_.value().max_footpath_length_};
+      for (auto const [i, l] : utl::enumerate(missing)) {
+        auto const path = osr::route(
+            params, *r.w_, *r.l_, p, pos, missing_locations[i],
+            pos_match[osr::match_idx_t{0U}],
+            missing_matches[osr::match_idx_t{
+                static_cast<osr::match_idx_t::value_t>(i)}],
+            equivalent_max, dir, nullptr, sharing, elevations,
+            osr::routing_algorithm::kAStarBi);
+        if (path.has_value()) {
+          reached.emplace_back(l, path->duration_);
+        }
+      }
+      return reached;
     };
 
     if (osr::is_rental_profile(profile)) {
@@ -454,17 +517,15 @@ std::vector<n::routing::offset> get_offsets(
           }
 
           auto const mode = gbfs_rd.get_transport_mode(prod_ref);
-          auto const paths =
+          auto const reached =
               route(gbfs::get_osr_profile(prod.form_factor_), &sharing, mode,
                     std::move(vehicle_return_allowed));
           ignore_walk = true;
-          for (auto const [p, l] : utl::zip(paths, near_stops)) {
-            if (p.has_value()) {
-              offsets.emplace_back(l,
-                                   n::duration_t{static_cast<unsigned>(
-                                       std::ceil(p->duration_.count() / 60.0))},
-                                   mode);
-            }
+          for (auto const& [l, d] : reached) {
+            offsets.emplace_back(l,
+                                 n::duration_t{static_cast<unsigned>(
+                                     std::ceil(d.count() / 60.0))},
+                                 mode);
           }
         }
 
@@ -475,14 +536,10 @@ std::vector<n::routing::offset> get_offsets(
 
     } else {
       auto const mode = transport_mode(profile);
-      auto const paths = route(profile, nullptr, mode);
-      for (auto const [p, l] : utl::zip(paths, near_stops)) {
-        if (p.has_value()) {
-          offsets.emplace_back(l,
-                               n::duration_t{static_cast<unsigned>(
-                                   std::ceil(p->duration_.count() / 60.0))},
-                               mode);
-        }
+      for (auto const& [l, d] : route(profile, nullptr, mode)) {
+        offsets.emplace_back(
+            l, n::duration_t{static_cast<unsigned>(std::ceil(d.count() / 60.0))},
+            mode);
       }
     }
 
