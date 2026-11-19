@@ -52,6 +52,7 @@
 #include "motis/constants.h"
 #include "motis/direct_filter.h"
 #include "motis/endpoints/routing.h"
+#include "motis/equivalence_colors.h"
 #include "motis/flex/flex.h"
 #include "motis/flex/flex_output.h"
 #include "motis/gbfs/data.h"
@@ -317,8 +318,10 @@ std::vector<n::routing::offset> get_offsets(
     }
 
     auto const max_dist = get_max_distance(profile, osr_params, max);
-    auto const near_stops =
-        get_stops_with_traffic(*r.tt_, rtt, *r.loc_tree_, pos, max_dist);
+    auto const near_stops = add_equivalents(
+        *r.tt_, rtt,
+        get_stops_with_traffic(*r.tt_, rtt, *r.loc_tree_, pos, max_dist));
+    auto const near_stop_colors = equivalence_colors(*r.tt_, near_stops);
     auto const near_stop_locations = utl::to_vec(
         near_stops,
         [&](n::location_idx_t const l) { return stop_to_osr_location(r, l); });
@@ -330,52 +333,54 @@ std::vector<n::routing::offset> get_offsets(
     };
     auto near_stop_match_cache = std::vector<near_stop_match_cache_entry>{};
 
-    auto const route = [&](osr::search_profile const p,
-                           osr::sharing_data const* sharing,
-                           transport_mode_t const mode,
-                           std::function<bool(geo::latlng const&)>
-                               vehicle_return_allowed = {}) {
-      auto const params = to_profile_parameters(
-          p, osr_params, std::move(vehicle_return_allowed));
-      auto pos_match = osr::match_result{};
-      r.l_->match(params, pos, false, dir, max_matching_distance, nullptr, p,
-                  {}, pos_match);
+    auto const route =
+        [&](osr::search_profile const p, osr::sharing_data const* sharing,
+            transport_mode_t const mode,
+            std::function<bool(geo::latlng const&)> vehicle_return_allowed =
+                {}) {
+          auto const params = to_profile_parameters(
+              p, osr_params, std::move(vehicle_return_allowed));
+          auto pos_match = osr::match_result{};
+          r.l_->match(params, pos, false, dir, max_matching_distance, nullptr,
+                      p, {}, pos_match);
 
-      auto cached_near_stop_matches =
-          utl::find_if(near_stop_match_cache, [&](auto const& entry) {
-            return entry.profile_ == p && entry.direction_ == dir;
-          });
-      if (cached_near_stop_matches == end(near_stop_match_cache)) {
-        auto matches = get_reverse_platform_way_matches(
-            *r.l_, r.way_matches_, p, near_stops, near_stop_locations, dir,
-            max_matching_distance);
-        near_stop_match_cache.emplace_back(p, dir, std::move(matches));
-        cached_near_stop_matches = std::prev(end(near_stop_match_cache));
-      }
-
-      auto state = osr::route_one_to_many(
-          params, *r.w_, *r.l_, p, pos, near_stop_locations,
-          pos_match[osr::match_idx_t{0U}], cached_near_stop_matches->matches_,
-          max, dir, nullptr, sharing, elevations);
-      auto const& paths = state->results();
-
-      if (states != nullptr) {
-        // Keep the search: offset legs are reconstructed from it later.
-        auto dest_idx = hash_map<n::location_idx_t, std::size_t>{};
-        for (auto const [i, l] : utl::enumerate(near_stops)) {
-          if (paths[i].has_value()) {
-            dest_idx.emplace(l, i);
+          auto cached_near_stop_matches =
+              utl::find_if(near_stop_match_cache, [&](auto const& entry) {
+                return entry.profile_ == p && entry.direction_ == dir;
+              });
+          if (cached_near_stop_matches == end(near_stop_match_cache)) {
+            auto matches = get_reverse_platform_way_matches(
+                *r.l_, r.way_matches_, p, near_stops, near_stop_locations, dir,
+                max_matching_distance);
+            near_stop_match_cache.emplace_back(p, dir, std::move(matches));
+            cached_near_stop_matches = std::prev(end(near_stop_match_cache));
           }
-        }
-        if (!dest_idx.empty()) {
-          states->by_mode_[mode] = states->searches_.size();
-          states->searches_.emplace_back(
-              one_to_many_search{std::move(state), std::move(dest_idx), {}});
-        }
-      }
 
-      return paths;
-    };
+          auto state = osr::route_one_to_many(
+              params, *r.w_, *r.l_, p, pos, near_stop_locations,
+              pos_match[osr::match_idx_t{0U}],
+              cached_near_stop_matches->matches_, max, dir, nullptr, sharing,
+              elevations, [](osr::path const&) { return false; }, std::nullopt,
+              near_stop_colors);
+          auto const& paths = state->results();
+
+          if (states != nullptr) {
+            // Keep the search: offset legs are reconstructed from it later.
+            auto dest_idx = hash_map<n::location_idx_t, std::size_t>{};
+            for (auto const [i, l] : utl::enumerate(near_stops)) {
+              if (paths[i].has_value()) {
+                dest_idx.emplace(l, i);
+              }
+            }
+            if (!dest_idx.empty()) {
+              states->by_mode_[mode] = states->searches_.size();
+              states->searches_.emplace_back(one_to_many_search{
+                  std::move(state), std::move(dest_idx), {}});
+            }
+          }
+
+          return paths;
+        };
 
     if (osr::is_rental_profile(profile)) {
       if (!gbfs_rd.has_data()) {

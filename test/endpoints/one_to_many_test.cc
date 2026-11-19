@@ -256,7 +256,7 @@ TEST(one_to_many, get_request_forward) {
                     {},
                     {{.duration_ = 2580.0, .transfers_ = 1}},
                     {{.duration_ = 2580.0, .transfers_ = 1}},
-                    {{.duration_ = 2940.0, .transfers_ = 1}},
+                    {{.duration_ = 2880.0, .transfers_ = 1}},
                     {},
                 }}}),
             durations);
@@ -333,7 +333,7 @@ TEST(one_to_many, post_request_backward) {
               {},
               {},
               {{.duration_ = 840.0, .transfers_ = 0}},
-              {{.duration_ = 1020.0, .transfers_ = 0}},
+              {{.duration_ = 960.0, .transfers_ = 0}},
               {},
               {{.duration_ = 3300.0, .transfers_ = 1}},  // from DA_10: 3420.0
               {{.duration_ = 3240.0, .transfers_ = 1}},
@@ -366,7 +366,9 @@ TEST(one_to_many,
       .maxMatchingDistance_ = 250.0,
       .arriveBy_ = false,
       .useRoutedTransfers_ = true,
-      .maxPreTransitTime_ = 360});  // Too short to reach U4
+      // Too short to walk to U4, but U4 (40 m from FFM_101) is part of FFM Hbf:
+      // the walk to it counts once FFM Hbf is reached.
+      .maxPreTransitTime_ = 360});
 
   EXPECT_EQ((api::OneToManyIntermodalResponse{
                 .street_durations_ = {{
@@ -387,13 +389,13 @@ TEST(one_to_many,
                     {},
                     {},
                     {},
-                    {{.duration_ = 1500.0, .transfers_ = 0}},  // Must take S3
-                    {{.duration_ = 1620.0, .transfers_ = 0}},  // Must take S3
+                    {{.duration_ = 900.0, .transfers_ = 0}},
+                    {{.duration_ = 960.0, .transfers_ = 0}},
                     {},
-                    {{.duration_ = 1680.0, .transfers_ = 0}},
-                    {{.duration_ = 1680.0, .transfers_ = 0}},
-                    {{.duration_ = 1620.0, .transfers_ = 0}},
-                    {{.duration_ = 1620.0, .transfers_ = 0}},
+                    {{.duration_ = 1080.0, .transfers_ = 0}},
+                    {{.duration_ = 1020.0, .transfers_ = 0}},
+                    {{.duration_ = 1080.0, .transfers_ = 0}},
+                    {{.duration_ = 960.0, .transfers_ = 0}},
 
                 }}}),
             durations);
@@ -437,10 +439,13 @@ TEST(one_to_many, get_request_backward_with_wheelchair_and_short_post_transit) {
 
   ASSERT_EQ(5U, td.size());
   ASSERT_EQ(1U, td.at(0).size());
-  EXPECT_DOUBLE_EQ(1560.0, td.at(0).at(0).duration_);
+  EXPECT_DOUBLE_EQ(1380.0, td.at(0).at(0).duration_);
   EXPECT_EQ(0, td.at(0).at(0).transfers_);
-  // Unreachable, as FFM_HAUPT_S -> FFM_HAUPT_U not usable postTransit
-  EXPECT_TRUE(td.at(1).empty());
+  // FFM_HAUPT_S -> FFM_HAUPT_U takes 247 s > 240 s, but both are Hauptwache:
+  // the walk counts once FFM_HAUPT_U is reached.
+  ASSERT_EQ(1U, td.at(1).size());
+  EXPECT_DOUBLE_EQ(960.0, td.at(1).at(0).duration_);
+  EXPECT_EQ(0, td.at(1).at(0).transfers_);
   EXPECT_TRUE(td.at(2).empty());
   EXPECT_TRUE(td.at(3).empty());
   EXPECT_TRUE(td.at(4).empty());
@@ -631,8 +636,10 @@ TEST(one_to_many, bug_additional_footpath_for_first_last_mile) {
                       {{.duration_ = 660.0, .transfers_ = 0}},
                       {{.duration_ = 600.0, .transfers_ = 0}},
                       {{.duration_ = 960.0, .transfers_ = 0}},
-                      {// FIXME Test location should be unreachable
-                       {.duration_ = 1380.0, .transfers_ = 0}},
+                      {// From U4 at FFM_HAUPT_U: the walk takes longer than
+                       // 420 s, but counts as FFM_HAUPT_S (same station) is
+                       // within it.
+                       {.duration_ = 1140.0, .transfers_ = 0}},
                   }}}),
               durations);
   }
@@ -743,7 +750,9 @@ TEST(one_to_many, pareto_sets_with_routed_transfers_and_distances) {
         .time_ = parse_time("2019-05-01T00:05:00.000+02:00"),
         .maxMatchingDistance_ = 25,
         .useRoutedTransfers_ = false,
-        .maxPreTransitTime_ = 240,  // Bus1 only: no walk to Tram_1 / Tram_2
+        // Bus1 only within 240 s. All DA stops are "DA Hbf", so the walks to
+        // the tram stops count too, each within its budget.
+        .maxPreTransitTime_ = 240,
         .withDistance_ = true});
   };
 
@@ -756,16 +765,12 @@ TEST(one_to_many, pareto_sets_with_routed_transfers_and_distances) {
     ASSERT_EQ(1U, dd.at(0).size());
     EXPECT_DOUBLE_EQ(1140.0, dd.at(0).at(0).duration_);
     EXPECT_EQ(0, dd.at(0).at(0).transfers_);
-    ASSERT_EQ(2U, dd.at(1).size());
-    EXPECT_DOUBLE_EQ(1320.0, dd.at(1).at(0).duration_);
+    ASSERT_EQ(1U, dd.at(1).size());
+    EXPECT_DOUBLE_EQ(1380.0, dd.at(1).at(0).duration_);
     EXPECT_EQ(0, dd.at(1).at(0).transfers_);
-    EXPECT_DOUBLE_EQ(1260.0, dd.at(1).at(1).duration_);
-    EXPECT_EQ(1, dd.at(1).at(1).transfers_);
-    ASSERT_EQ(2U, dd.at(2).size());
-    EXPECT_DOUBLE_EQ(1500.0, dd.at(2).at(0).duration_);
+    ASSERT_EQ(1U, dd.at(2).size());
+    EXPECT_DOUBLE_EQ(1320.0, dd.at(2).at(0).duration_);
     EXPECT_EQ(0, dd.at(2).at(0).transfers_);
-    EXPECT_DOUBLE_EQ(1320.0, dd.at(2).at(1).duration_);
-    EXPECT_EQ(1, dd.at(2).at(1).transfers_);
     ASSERT_EQ(1U, dd.at(3).size());
     EXPECT_DOUBLE_EQ(4260.0, dd.at(3).at(0).duration_);
     EXPECT_EQ(2, dd.at(3).at(0).transfers_);
@@ -780,16 +785,12 @@ TEST(one_to_many, pareto_sets_with_routed_transfers_and_distances) {
     ASSERT_EQ(1U, dd.at(0).size());
     EXPECT_DOUBLE_EQ(1140.0, dd.at(0).at(0).duration_);
     EXPECT_EQ(0, dd.at(0).at(0).transfers_);
-    ASSERT_EQ(2U, dd.at(1).size());
-    EXPECT_DOUBLE_EQ(1320.0, dd.at(1).at(0).duration_);
+    ASSERT_EQ(1U, dd.at(1).size());
+    EXPECT_DOUBLE_EQ(1380.0, dd.at(1).at(0).duration_);
     EXPECT_EQ(0, dd.at(1).at(0).transfers_);
-    EXPECT_DOUBLE_EQ(1260.0, dd.at(1).at(1).duration_);
-    EXPECT_EQ(1, dd.at(1).at(1).transfers_);
-    ASSERT_EQ(2U, dd.at(2).size());
-    EXPECT_DOUBLE_EQ(1500.0, dd.at(2).at(0).duration_);
+    ASSERT_EQ(1U, dd.at(2).size());
+    EXPECT_DOUBLE_EQ(1320.0, dd.at(2).at(0).duration_);
     EXPECT_EQ(0, dd.at(2).at(0).transfers_);
-    EXPECT_DOUBLE_EQ(1320.0, dd.at(2).at(1).duration_);
-    EXPECT_EQ(1, dd.at(2).at(1).transfers_);
     ASSERT_EQ(1U, dd.at(3).size());
     EXPECT_DOUBLE_EQ(4260.0, dd.at(3).at(0).duration_);
     EXPECT_EQ(2, dd.at(3).at(0).transfers_);
@@ -812,7 +813,10 @@ TEST(one_to_many, pareto_sets_with_multiple_entries) {
                 "49.871561,8.6320181"},  // DA_Tram_3
       .time_ = parse_time("2019-05-01T00:05:00.000+02:00"),
       .maxMatchingDistance_ = 25,
-      .maxPreTransitTime_ = 240});  // Prevent any pre transit to Tram_x
+      // Within 240 s only Bus1, but all DA stops are "DA Hbf": the walks to
+      // the tram stops count too (within their budget), and a ride from there
+      // beats both entries Bus1 alone gives (1500 s, 1320 s with a transfer).
+      .maxPreTransitTime_ = 240});
 
   // We only care about duration to DA_Tram_3, everything else is for debugging
   auto const& sd = durations.street_durations_.value();
@@ -821,8 +825,7 @@ TEST(one_to_many, pareto_sets_with_multiple_entries) {
   EXPECT_EQ((std::optional<std::vector<std::vector<api::ParetoSetEntry>>>{{
                 {{.duration_ = 960.0, .transfers_ = 0}},
                 {{.duration_ = 1140.0, .transfers_ = 0}},
-                {{.duration_ = 1500.0, .transfers_ = 0},
-                 {.duration_ = 1320.0, .transfers_ = 1}},
+                {{.duration_ = 1320.0, .transfers_ = 0}},
             }}),
             durations.transit_durations_);
 }
